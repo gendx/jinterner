@@ -1,5 +1,7 @@
 use super::Jinterners;
 use blazinterner::Interned;
+#[cfg(feature = "get-size2")]
+use get_size2::GetSize;
 use ordered_float::OrderedFloat;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -12,6 +14,16 @@ type InternedStr = Interned<str, Box<str>>;
 
 #[derive(Default, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct Float64(OrderedFloat<f64>);
+
+#[cfg(feature = "get-size2")]
+impl GetSize for Float64 {
+    // There is nothing on the heap, so the default implementation works out of the
+    // box.
+}
+
+#[derive(Default, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub enum IValue {
     #[default]
@@ -19,7 +31,7 @@ pub enum IValue {
     Bool(bool),
     U64(u64),
     I64(i64),
-    F64(OrderedFloat<f64>),
+    F64(Float64),
     String(InternedStr),
     Array(Interned<IArray>),
     Object(Interned<IObject>),
@@ -36,7 +48,7 @@ impl IValue {
                 } else if x.is_i64() {
                     IValue::I64(x.as_i64().unwrap())
                 } else {
-                    IValue::F64(OrderedFloat(x.as_f64().unwrap()))
+                    IValue::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
                 }
             }
             Value::String(s) => IValue::String(Interned::from(&interners.string, s)),
@@ -61,7 +73,7 @@ impl IValue {
             IValue::Bool(x) => Value::Bool(*x),
             IValue::U64(x) => Value::Number(Number::from_u128(*x as u128).unwrap()),
             IValue::I64(x) => Value::Number(Number::from_i128(*x as i128).unwrap()),
-            IValue::F64(OrderedFloat(x)) => Value::Number(Number::from_f64(*x).unwrap()),
+            IValue::F64(Float64(OrderedFloat(x))) => Value::Number(Number::from_f64(*x).unwrap()),
             IValue::String(s) => Value::String(s.lookup_ref(&interners.string).into()),
             IValue::Array(a) => Value::Array(
                 a.lookup_ref(&interners.iarray)
