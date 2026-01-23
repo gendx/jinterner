@@ -15,7 +15,7 @@ use serde_json::Value;
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 
 /// An arena to store interned JSON values.
-#[derive(Default)]
+#[derive(Default, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize_tuple, Deserialize_tuple))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct Jinterners {
@@ -25,7 +25,7 @@ pub struct Jinterners {
 }
 
 /// An interned JSON value.
-#[derive(Default, Hash, PartialEq, Eq)]
+#[derive(Default, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct IValue(detail::IValue);

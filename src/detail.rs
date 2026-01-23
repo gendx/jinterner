@@ -9,6 +9,7 @@ use serde_json::{Number, Value};
 #[cfg(feature = "serde")]
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 use std::collections::BTreeMap;
+use std::fmt::Debug;
 
 type InternedStr = Interned<str, Box<str>>;
 
@@ -16,13 +17,19 @@ type InternedStr = Interned<str, Box<str>>;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Float64(OrderedFloat<f64>);
 
+impl Debug for Float64 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}", self.0.0))
+    }
+}
+
 #[cfg(feature = "get-size2")]
 impl GetSize for Float64 {
     // There is nothing on the heap, so the default implementation works out of the
     // box.
 }
 
-#[derive(Default, Hash, PartialEq, Eq)]
+#[derive(Default, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub enum IValue {
@@ -87,12 +94,12 @@ impl IValue {
     }
 }
 
-#[derive(Default, Hash, PartialEq, Eq)]
+#[derive(Default, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct IArray(Box<[IValue]>);
 
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Default, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize_tuple, Deserialize_tuple))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct IObject {
