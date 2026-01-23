@@ -37,6 +37,12 @@ impl IValue {
         Self(detail::IValue::from(interners, source))
     }
 
+    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
+    /// arena.
+    pub fn from_ref(interners: &Jinterners, source: &Value) -> Self {
+        Self(detail::IValue::from_ref(interners, source))
+    }
+
     /// Retrieves the corresponding [`serde_json::Value`] inside the given
     /// [`Jinterners`] arena.
     pub fn lookup(&self, interners: &Jinterners) -> Value {

@@ -74,6 +74,35 @@ impl IValue {
         }
     }
 
+    pub fn from_ref(interners: &Jinterners, source: &Value) -> Self {
+        match source {
+            Value::Null => IValue::Null,
+            Value::Bool(x) => IValue::Bool(*x),
+            Value::Number(x) => {
+                if x.is_u64() {
+                    IValue::U64(x.as_u64().unwrap())
+                } else if x.is_i64() {
+                    IValue::I64(x.as_i64().unwrap())
+                } else {
+                    IValue::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
+                }
+            }
+            Value::String(s) => IValue::String(Interned::from(&interners.string, s.as_str())),
+            Value::Array(a) => IValue::Array(Interned::from(
+                &interners.iarray,
+                IArray(
+                    a.iter()
+                        .map(|v| IValue::from_ref(interners, v))
+                        .collect::<Box<[_]>>(),
+                ),
+            )),
+            Value::Object(o) => {
+                let io = IObject::from_ref(interners, o);
+                IValue::Object(Interned::from(&interners.iobject, io))
+            }
+        }
+    }
+
     pub fn lookup(&self, interners: &Jinterners) -> Value {
         match self {
             IValue::Null => Value::Null,
@@ -115,6 +144,20 @@ impl IObject {
                     (
                         Interned::from(&interners.string, k),
                         IValue::from(interners, v),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn from_ref(interners: &Jinterners, source: &serde_json::Map<String, Value>) -> Self {
+        Self {
+            map: source
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        Interned::from(&interners.string, k.as_str()),
+                        IValue::from_ref(interners, v),
                     )
                 })
                 .collect(),
