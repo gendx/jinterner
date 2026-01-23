@@ -24,6 +24,45 @@ pub struct Jinterners {
     iobject: Arena<detail::IObject>,
 }
 
+#[cfg(feature = "get-size2")]
+impl Jinterners {
+    /// Gets the size in bytes of the underlying string arena.
+    pub fn get_size_strings(&self) -> usize {
+        self.string.get_size()
+    }
+
+    /// Gets the size in bytes of the underlying array arena.
+    pub fn get_size_arrays(&self) -> usize {
+        self.iarray.get_size()
+    }
+
+    /// Gets the size in bytes of the underlying object arena.
+    pub fn get_size_objects(&self) -> usize {
+        self.iobject.get_size()
+    }
+}
+
+#[cfg(feature = "debug")]
+impl Jinterners {
+    /// Prints a summary of the storage used by the underlying string arena to
+    /// stdout.
+    pub fn print_summary_strings(&self, prefix: &str, title: &str, total_bytes: usize) {
+        self.string.print_summary(prefix, title, total_bytes);
+    }
+
+    /// Prints a summary of the storage used by the underlying array arena to
+    /// stdout.
+    pub fn print_summary_arrays(&self, prefix: &str, title: &str, total_bytes: usize) {
+        self.iarray.print_summary(prefix, title, total_bytes);
+    }
+
+    /// Prints a summary of the storage used by the underlying object arena to
+    /// stdout.
+    pub fn print_summary_objects(&self, prefix: &str, title: &str, total_bytes: usize) {
+        self.iobject.print_summary(prefix, title, total_bytes);
+    }
+}
+
 /// An interned JSON value.
 #[derive(Default, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

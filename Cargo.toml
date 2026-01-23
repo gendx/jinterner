@@ -17,6 +17,7 @@ rustdoc-args = ["--cfg", "docsrs", "--generate-link-to-definition"]
 
 [features]
 default = []
+debug = ["blazinterner/debug"]
 get-size2 = ["dep:get-size2", "blazinterner/get-size2"]
 serde = ["dep:serde", "dep:serde_tuple", "blazinterner/serde"]
 
