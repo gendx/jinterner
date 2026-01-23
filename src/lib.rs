@@ -1,6 +1,7 @@
 //! An efficient and concurrent interning library for JSON values.
 
 #![forbid(missing_docs, unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod detail;
 
