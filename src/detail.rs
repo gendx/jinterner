@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 #[cfg(feature = "serde")]
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
-use std::collections::BTreeMap;
 use std::fmt::Debug;
 
 type InternedStr = Interned<str, Box<str>>;
@@ -132,36 +131,36 @@ pub struct IArray(Box<[IValue]>);
 #[cfg_attr(feature = "serde", derive(Serialize_tuple, Deserialize_tuple))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct IObject {
-    map: BTreeMap<InternedStr, IValue>,
+    map: Box<[(InternedStr, IValue)]>,
 }
 
 impl IObject {
     fn from(interners: &Jinterners, source: serde_json::Map<String, Value>) -> Self {
-        Self {
-            map: source
-                .into_iter()
-                .map(|(k, v)| {
-                    (
-                        Interned::from(&interners.string, k),
-                        IValue::from(interners, v),
-                    )
-                })
-                .collect(),
-        }
+        let mut map: Box<[_]> = source
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    Interned::from(&interners.string, k),
+                    IValue::from(interners, v),
+                )
+            })
+            .collect();
+        map.sort_unstable_by_key(|(k, _)| *k);
+        Self { map }
     }
 
     fn from_ref(interners: &Jinterners, source: &serde_json::Map<String, Value>) -> Self {
-        Self {
-            map: source
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        Interned::from(&interners.string, k.as_str()),
-                        IValue::from_ref(interners, v),
-                    )
-                })
-                .collect(),
-        }
+        let mut map: Box<[_]> = source
+            .iter()
+            .map(|(k, v)| {
+                (
+                    Interned::from(&interners.string, k.as_str()),
+                    IValue::from_ref(interners, v),
+                )
+            })
+            .collect();
+        map.sort_unstable_by_key(|(k, _)| *k);
+        Self { map }
     }
 
     fn lookup(&self, interners: &Jinterners) -> serde_json::Map<String, Value> {
