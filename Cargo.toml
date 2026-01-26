@@ -1,7 +1,7 @@
 [package]
 name = "jinterner"
 description = "Efficient and concurrent interning of JSON data"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Guillaume Endignoux <ggendx@gmail.com>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/gendx/jinterner"
@@ -12,7 +12,7 @@ edition = "2024"
 rust-version = "1.85.0"
 
 [package.metadata.docs.rs]
-features = ["get-size2", "serde"]
+features = ["debug", "get-size2", "serde"]
 rustdoc-args = ["--cfg", "docsrs", "--generate-link-to-definition"]
 
 [features]
