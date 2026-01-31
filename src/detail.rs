@@ -10,6 +10,7 @@ use serde_json::{Number, Value};
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::ops::Deref;
 
 type InternedStr = Interned<str, Box<str>>;
 
@@ -121,6 +122,45 @@ impl IValue {
             IValue::Object(o) => Value::Object(o.lookup_ref(&interners.iobject).lookup(interners)),
         }
     }
+
+    pub fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
+        match self {
+            IValue::Null => ValueRef::Null,
+            IValue::Bool(x) => ValueRef::Bool(*x),
+            IValue::U64(x) => ValueRef::U64(*x),
+            IValue::I64(x) => ValueRef::I64(*x),
+            IValue::F64(Float64(OrderedFloat(x))) => ValueRef::F64(*x),
+            IValue::String(s) => ValueRef::String(s.lookup_ref(&interners.string)),
+            IValue::Array(a) => ValueRef::Array(a.lookup_ref(&interners.iarray).0.deref()),
+            IValue::Object(o) => ValueRef::Object(
+                o.lookup_ref(&interners.iobject)
+                    .map
+                    .iter()
+                    .map(|(k, v)| (k.lookup_ref(&interners.string), v))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+/// A shallow reference to a JSON value.
+pub enum ValueRef<'a> {
+    /// JSON null value.
+    Null,
+    /// JSON boolean value.
+    Bool(bool),
+    /// JSON number that fits in a [`u64`].
+    U64(u64),
+    /// JSON number that fits in a [`i64`].
+    I64(i64),
+    /// JSON number that fits in a [`f64`].
+    F64(f64),
+    /// JSON string.
+    String(&'a str),
+    /// JSON array.
+    Array(&'a [IValue]),
+    /// JSON object.
+    Object(HashMap<&'a str, &'a IValue>),
 }
 
 #[derive(Default, Debug, Hash, PartialEq, Eq)]

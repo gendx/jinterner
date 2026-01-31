@@ -6,6 +6,7 @@
 mod detail;
 
 use blazinterner::{Arena, DeltaEncoding};
+pub use detail::ValueRef;
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 #[cfg(feature = "serde")]
@@ -86,5 +87,15 @@ impl IValue {
     /// [`Jinterners`] arena.
     pub fn lookup(&self, interners: &Jinterners) -> Value {
         self.0.lookup(interners)
+    }
+
+    /// Performs a shallow lookup of this value inside the given [`Jinterners`]
+    /// arena.
+    ///
+    /// Contrary to [`lookup()`](Self::lookup), this function doesn't create a
+    /// deep copy of the value, and is therefore likely more efficient if
+    /// you only need to query specific object field(s) or array element(s).
+    pub fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
+        self.0.lookup_ref(interners)
     }
 }
