@@ -1,5 +1,5 @@
 use super::Jinterners;
-use blazinterner::Interned;
+use blazinterner::{Accumulator, Interned};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 use ordered_float::OrderedFloat;
@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 #[cfg(feature = "serde")]
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 type InternedStr = Interned<str, Box<str>>;
@@ -168,5 +169,202 @@ impl IObject {
             .iter()
             .map(|(k, v)| (k.lookup_ref(&interners.string).into(), v.lookup(interners)))
             .collect()
+    }
+}
+
+/// Difference between two JSON values, for better delta encoding
+/// serialization.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+enum IValueDelta {
+    Null,
+    Bool(bool),
+    U64(i64),
+    I64(i64),
+    F64(f64),
+    String(i32),
+    Array(i32),
+    Object(i32),
+}
+
+struct IValueAccumulator {
+    b: bool,
+    u: u64,
+    i: i64,
+    f: f64,
+    s: u32,
+    a: u32,
+    o: u32,
+}
+
+impl Default for IValueAccumulator {
+    fn default() -> Self {
+        Self {
+            b: false,
+            u: 0,
+            i: 0,
+            f: f64::from_bits(0),
+            s: 0,
+            a: 0,
+            o: 0,
+        }
+    }
+}
+
+impl Accumulator for IValueAccumulator {
+    type Value = IValue;
+    type Storage = IValue;
+    type Delta = IValueDelta;
+
+    fn fold(&mut self, v: &Self::Value) -> Self::Delta {
+        match v {
+            IValue::Null => IValueDelta::Null,
+            IValue::Bool(x) => {
+                let diff = self.b ^ x;
+                self.b = *x;
+                IValueDelta::Bool(diff)
+            }
+            IValue::U64(x) => {
+                let diff = x.wrapping_sub(self.u);
+                self.u = *x;
+                IValueDelta::U64(diff as i64)
+            }
+            IValue::I64(x) => {
+                let diff = x.wrapping_sub(self.i);
+                self.i = *x;
+                IValueDelta::I64(diff)
+            }
+            IValue::F64(x) => {
+                let diff = x.0.to_bits() ^ self.f.to_bits();
+                self.f = *x.0;
+                IValueDelta::F64(f64::from_bits(diff))
+            }
+            IValue::String(x) => {
+                let diff = x.id().wrapping_sub(self.s);
+                self.s = x.id();
+                IValueDelta::String(diff as i32)
+            }
+            IValue::Array(x) => {
+                let diff = x.id().wrapping_sub(self.a);
+                self.a = x.id();
+                IValueDelta::Array(diff as i32)
+            }
+            IValue::Object(x) => {
+                let diff = x.id().wrapping_sub(self.o);
+                self.o = x.id();
+                IValueDelta::Object(diff as i32)
+            }
+        }
+    }
+
+    fn unfold(&mut self, d: Self::Delta) -> Self::Value {
+        match d {
+            IValueDelta::Null => IValue::Null,
+            IValueDelta::Bool(x) => {
+                let x = self.b ^ x;
+                self.b = x;
+                IValue::Bool(x)
+            }
+            IValueDelta::U64(x) => {
+                let x = self.u.wrapping_add(x as u64);
+                self.u = x;
+                IValue::U64(x)
+            }
+            IValueDelta::I64(x) => {
+                let x = self.i.wrapping_add(x);
+                self.i = x;
+                IValue::I64(x)
+            }
+            IValueDelta::F64(x) => {
+                let x = f64::from_bits(self.f.to_bits() ^ x.to_bits());
+                self.f = x;
+                IValue::F64(Float64(OrderedFloat(x)))
+            }
+            IValueDelta::String(x) => {
+                let x = self.s.wrapping_add(x as u32);
+                self.s = x;
+                IValue::String(Interned::from_id(x))
+            }
+            IValueDelta::Array(x) => {
+                let x = self.a.wrapping_add(x as u32);
+                self.a = x;
+                IValue::Array(Interned::from_id(x))
+            }
+            IValueDelta::Object(x) => {
+                let x = self.o.wrapping_add(x as u32);
+                self.o = x;
+                IValue::Object(Interned::from_id(x))
+            }
+        }
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct IArrayDelta(Box<[IValueDelta]>);
+
+#[derive(Default)]
+pub struct IArrayAccumulator(IValueAccumulator);
+
+impl Accumulator for IArrayAccumulator {
+    type Value = IArray;
+    type Storage = IArray;
+    type Delta = IArrayDelta;
+
+    fn fold(&mut self, v: &Self::Value) -> Self::Delta {
+        IArrayDelta(v.0.iter().map(|x| self.0.fold(x)).collect())
+    }
+
+    fn unfold(&mut self, d: Self::Delta) -> Self::Value {
+        IArray(d.0.into_iter().map(|x| self.0.unfold(x)).collect())
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize_tuple, Deserialize_tuple))]
+pub struct IObjectDelta {
+    map: Box<[(i32, IValueDelta)]>,
+}
+
+#[derive(Default)]
+pub struct IObjectAccumulator {
+    map: HashMap<u32, IValueAccumulator>,
+}
+
+impl Accumulator for IObjectAccumulator {
+    type Value = IObject;
+    type Storage = IObject;
+    type Delta = IObjectDelta;
+
+    fn fold(&mut self, v: &Self::Value) -> Self::Delta {
+        let mut key = 0;
+        IObjectDelta {
+            map: v
+                .map
+                .iter()
+                .map(|(k, x)| {
+                    let k = k.id();
+                    let kdiff = k.wrapping_sub(key);
+                    key = k;
+                    let acc = self.map.entry(k).or_default();
+                    let xdiff = acc.fold(x);
+                    (kdiff as i32, xdiff)
+                })
+                .collect(),
+        }
+    }
+
+    fn unfold(&mut self, d: Self::Delta) -> Self::Value {
+        let mut key = 0;
+        IObject {
+            map: d
+                .map
+                .into_iter()
+                .map(|(kdiff, xdiff)| {
+                    let k = (kdiff as u32).wrapping_add(key);
+                    key = k;
+                    let acc = self.map.entry(k).or_default();
+                    let x = acc.unfold(xdiff);
+                    (Interned::from_id(k), x)
+                })
+                .collect(),
+        }
     }
 }

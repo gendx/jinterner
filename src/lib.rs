@@ -5,7 +5,7 @@
 
 mod detail;
 
-use blazinterner::Arena;
+use blazinterner::{Arena, DeltaEncoding};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 #[cfg(feature = "serde")]
@@ -20,8 +20,8 @@ use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct Jinterners {
     string: Arena<str, Box<str>>,
-    iarray: Arena<detail::IArray>,
-    iobject: Arena<detail::IObject>,
+    iarray: DeltaEncoding<Arena<detail::IArray>, detail::IArrayAccumulator>,
+    iobject: DeltaEncoding<Arena<detail::IObject>, detail::IObjectAccumulator>,
 }
 
 #[cfg(feature = "get-size2")]
