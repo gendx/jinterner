@@ -294,8 +294,9 @@ impl Accumulator for IValueAccumulator {
     type Value = IValueImpl;
     type Storage = IValueImpl;
     type Delta = IValueDelta;
+    type DeltaStorage = IValueDelta;
 
-    fn fold(&mut self, v: &Self::Value) -> Self::Delta {
+    fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
         match v {
             IValueImpl::Null => IValueDelta::Null,
             IValueImpl::Bool(x) => {
@@ -336,7 +337,7 @@ impl Accumulator for IValueAccumulator {
         }
     }
 
-    fn unfold(&mut self, d: Self::Delta) -> Self::Value {
+    fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
         match d {
             IValueDelta::Null => IValueImpl::Null,
             IValueDelta::Bool(x) => {
@@ -345,12 +346,12 @@ impl Accumulator for IValueAccumulator {
                 IValueImpl::Bool(x)
             }
             IValueDelta::U64(x) => {
-                let x = self.u.wrapping_add(x as u64);
+                let x = self.u.wrapping_add(*x as u64);
                 self.u = x;
                 IValueImpl::U64(x)
             }
             IValueDelta::I64(x) => {
-                let x = self.i.wrapping_add(x);
+                let x = self.i.wrapping_add(*x);
                 self.i = x;
                 IValueImpl::I64(x)
             }
@@ -360,17 +361,17 @@ impl Accumulator for IValueAccumulator {
                 IValueImpl::F64(Float64(OrderedFloat(x)))
             }
             IValueDelta::String(x) => {
-                let x = self.s.wrapping_add(x as u32);
+                let x = self.s.wrapping_add(*x as u32);
                 self.s = x;
                 IValueImpl::String(Interned::from_id(x))
             }
             IValueDelta::Array(x) => {
-                let x = self.a.wrapping_add(x as u32);
+                let x = self.a.wrapping_add(*x as u32);
                 self.a = x;
                 IValueImpl::Array(Interned::from_id(x))
             }
             IValueDelta::Object(x) => {
-                let x = self.o.wrapping_add(x as u32);
+                let x = self.o.wrapping_add(*x as u32);
                 self.o = x;
                 IValueImpl::Object(Interned::from_id(x))
             }
@@ -388,13 +389,14 @@ impl Accumulator for IArrayAccumulator {
     type Value = IArray;
     type Storage = IArray;
     type Delta = IArrayDelta;
+    type DeltaStorage = IArrayDelta;
 
-    fn fold(&mut self, v: &Self::Value) -> Self::Delta {
+    fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
         IArrayDelta(v.0.iter().map(|x| self.0.fold(&x.0)).collect())
     }
 
-    fn unfold(&mut self, d: Self::Delta) -> Self::Value {
-        IArray(d.0.into_iter().map(|x| IValue(self.0.unfold(x))).collect())
+    fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
+        IArray(d.0.iter().map(|x| IValue(self.0.unfold(x))).collect())
     }
 }
 
@@ -412,8 +414,9 @@ impl Accumulator for IObjectAccumulator {
     type Value = IObject;
     type Storage = IObject;
     type Delta = IObjectDelta;
+    type DeltaStorage = IObjectDelta;
 
-    fn fold(&mut self, v: &Self::Value) -> Self::Delta {
+    fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
         let mut key = 0;
         IObjectDelta {
             map: v
@@ -431,14 +434,14 @@ impl Accumulator for IObjectAccumulator {
         }
     }
 
-    fn unfold(&mut self, d: Self::Delta) -> Self::Value {
+    fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
         let mut key = 0;
         IObject {
             map: d
                 .map
-                .into_iter()
+                .iter()
                 .map(|(kdiff, xdiff)| {
-                    let k = (kdiff as u32).wrapping_add(key);
+                    let k = (*kdiff as u32).wrapping_add(key);
                     key = k;
                     let acc = self.map.entry(k).or_default();
                     let x = IValue(acc.unfold(xdiff));

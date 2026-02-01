@@ -9,7 +9,7 @@ categories = ["caching", "encoding", "memory-management", "concurrency"]
 keywords = ["arena", "interning", "interner", "json"]
 exclude = [".github/*"]
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.91.0"
 
 [package.metadata.docs.rs]
 features = ["debug", "get-size2", "serde"]
@@ -23,7 +23,7 @@ serde = ["dep:serde", "dep:serde_tuple", "blazinterner/serde"]
 
 [dependencies]
 get-size2 = { optional = true, version = "0.7.4", features = ["derive"] }
-blazinterner = { version = "0.1.2", features = ["delta", "raw"] }
+blazinterner = { version = "0.2.0", features = ["delta", "raw"] }
 ordered-float = { version = "5.1.0", features = ["serde"] }
 serde = { optional = true, version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
