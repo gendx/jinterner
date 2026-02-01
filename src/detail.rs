@@ -1,21 +1,29 @@
 use super::Jinterners;
-use blazinterner::{Accumulator, Interned};
+use blazinterner::{Accumulator, Interned, InternedSlice};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 use ordered_float::OrderedFloat;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
-#[cfg(feature = "serde")]
-use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::ops::Deref;
 
 type InternedStr = Interned<str, Box<str>>;
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "get-size2", derive(GetSize))]
+pub struct InternedStrKey(InternedStr);
+
+impl Default for InternedStrKey {
+    fn default() -> Self {
+        InternedStrKey(InternedStr::from_id(0))
+    }
+}
+
 /// An interned JSON value.
-#[derive(Default, Debug, Hash, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct IValue(IValueImpl);
@@ -50,7 +58,7 @@ impl IValue {
     }
 }
 
-#[derive(Default, Hash, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 struct Float64(OrderedFloat<f64>);
 
@@ -66,7 +74,7 @@ impl GetSize for Float64 {
     // box.
 }
 
-#[derive(Default, Debug, Hash, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 enum IValueImpl {
@@ -77,8 +85,8 @@ enum IValueImpl {
     I64(i64),
     F64(Float64),
     String(InternedStr),
-    Array(Interned<IArray>),
-    Object(Interned<IObject>),
+    Array(InternedSlice<IValue>),
+    Object(InternedSlice<(InternedStrKey, IValue)>),
 }
 
 impl IValueImpl {
@@ -96,17 +104,24 @@ impl IValueImpl {
                 }
             }
             Value::String(s) => IValueImpl::String(Interned::from(&interners.string, s)),
-            Value::Array(a) => IValueImpl::Array(Interned::from(
+            Value::Array(a) => IValueImpl::Array(InternedSlice::from(
                 &interners.iarray,
-                IArray(
-                    a.into_iter()
-                        .map(|v| IValue::from(interners, v))
-                        .collect::<Box<[_]>>(),
-                ),
+                &a.into_iter()
+                    .map(|v| IValue::from(interners, v))
+                    .collect::<Box<[_]>>(),
             )),
             Value::Object(o) => {
-                let io = IObject::from(interners, o);
-                IValueImpl::Object(Interned::from(&interners.iobject, io))
+                let mut io: Box<[_]> = o
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (
+                            InternedStrKey(Interned::from(&interners.string, k)),
+                            IValue::from(interners, v),
+                        )
+                    })
+                    .collect();
+                io.sort_unstable_by_key(|(k, _)| *k);
+                IValueImpl::Object(InternedSlice::from(&interners.iobject, &io))
             }
         }
     }
@@ -125,17 +140,24 @@ impl IValueImpl {
                 }
             }
             Value::String(s) => IValueImpl::String(Interned::from(&interners.string, s.as_str())),
-            Value::Array(a) => IValueImpl::Array(Interned::from(
+            Value::Array(a) => IValueImpl::Array(InternedSlice::from(
                 &interners.iarray,
-                IArray(
-                    a.iter()
-                        .map(|v| IValue::from_ref(interners, v))
-                        .collect::<Box<[_]>>(),
-                ),
+                &a.iter()
+                    .map(|v| IValue::from_ref(interners, v))
+                    .collect::<Box<[_]>>(),
             )),
             Value::Object(o) => {
-                let io = IObject::from_ref(interners, o);
-                IValueImpl::Object(Interned::from(&interners.iobject, io))
+                let mut io: Box<[_]> = o
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            InternedStrKey(Interned::from(&interners.string, k.as_str())),
+                            IValue::from_ref(interners, v),
+                        )
+                    })
+                    .collect();
+                io.sort_unstable_by_key(|(k, _)| *k);
+                IValueImpl::Object(InternedSlice::from(&interners.iobject, &io))
             }
         }
     }
@@ -151,15 +173,22 @@ impl IValueImpl {
             }
             IValueImpl::String(s) => Value::String(s.lookup_ref(&interners.string).into()),
             IValueImpl::Array(a) => Value::Array(
-                a.lookup_ref(&interners.iarray)
-                    .0
+                a.lookup(&interners.iarray)
                     .iter()
                     .map(|v| v.lookup(interners))
                     .collect(),
             ),
-            IValueImpl::Object(o) => {
-                Value::Object(o.lookup_ref(&interners.iobject).lookup(interners))
-            }
+            IValueImpl::Object(o) => Value::Object(
+                o.lookup(&interners.iobject)
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.0.lookup_ref(&interners.string).into(),
+                            v.lookup(interners),
+                        )
+                    })
+                    .collect(),
+            ),
         }
     }
 
@@ -171,12 +200,11 @@ impl IValueImpl {
             IValueImpl::I64(x) => ValueRef::I64(*x),
             IValueImpl::F64(Float64(OrderedFloat(x))) => ValueRef::F64(*x),
             IValueImpl::String(s) => ValueRef::String(s.lookup_ref(&interners.string)),
-            IValueImpl::Array(a) => ValueRef::Array(a.lookup_ref(&interners.iarray).0.deref()),
+            IValueImpl::Array(a) => ValueRef::Array(a.lookup(&interners.iarray)),
             IValueImpl::Object(o) => ValueRef::Object(
-                o.lookup_ref(&interners.iobject)
-                    .map
+                o.lookup(&interners.iobject)
                     .iter()
-                    .map(|(k, v)| (k.lookup_ref(&interners.string), v))
+                    .map(|(k, v)| (k.0.lookup_ref(&interners.string), v))
                     .collect(),
             ),
         }
@@ -203,59 +231,10 @@ pub enum ValueRef<'a> {
     Object(HashMap<&'a str, &'a IValue>),
 }
 
-#[derive(Default, Debug, Hash, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "get-size2", derive(GetSize))]
-pub struct IArray(Box<[IValue]>);
-
-#[derive(Default, Debug, Hash, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize_tuple, Deserialize_tuple))]
-#[cfg_attr(feature = "get-size2", derive(GetSize))]
-pub struct IObject {
-    map: Box<[(InternedStr, IValue)]>,
-}
-
-impl IObject {
-    fn from(interners: &Jinterners, source: serde_json::Map<String, Value>) -> Self {
-        let mut map: Box<[_]> = source
-            .into_iter()
-            .map(|(k, v)| {
-                (
-                    Interned::from(&interners.string, k),
-                    IValue::from(interners, v),
-                )
-            })
-            .collect();
-        map.sort_unstable_by_key(|(k, _)| *k);
-        Self { map }
-    }
-
-    fn from_ref(interners: &Jinterners, source: &serde_json::Map<String, Value>) -> Self {
-        let mut map: Box<[_]> = source
-            .iter()
-            .map(|(k, v)| {
-                (
-                    Interned::from(&interners.string, k.as_str()),
-                    IValue::from_ref(interners, v),
-                )
-            })
-            .collect();
-        map.sort_unstable_by_key(|(k, _)| *k);
-        Self { map }
-    }
-
-    fn lookup(&self, interners: &Jinterners) -> serde_json::Map<String, Value> {
-        self.map
-            .iter()
-            .map(|(k, v)| (k.lookup_ref(&interners.string).into(), v.lookup(interners)))
-            .collect()
-    }
-}
-
 /// Difference between two JSON values, for better delta encoding
 /// serialization.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-enum IValueDelta {
+pub enum IValueDelta {
     Null,
     Bool(bool),
     U64(i64),
@@ -368,41 +347,33 @@ impl Accumulator for IValueAccumulator {
             IValueDelta::Array(x) => {
                 let x = self.a.wrapping_add(*x as u32);
                 self.a = x;
-                IValueImpl::Array(Interned::from_id(x))
+                IValueImpl::Array(InternedSlice::from_id(x))
             }
             IValueDelta::Object(x) => {
                 let x = self.o.wrapping_add(*x as u32);
                 self.o = x;
-                IValueImpl::Object(Interned::from_id(x))
+                IValueImpl::Object(InternedSlice::from_id(x))
             }
         }
     }
 }
 
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct IArrayDelta(Box<[IValueDelta]>);
-
 #[derive(Default)]
 pub struct IArrayAccumulator(IValueAccumulator);
 
 impl Accumulator for IArrayAccumulator {
-    type Value = IArray;
-    type Storage = IArray;
-    type Delta = IArrayDelta;
-    type DeltaStorage = IArrayDelta;
+    type Value = [IValue];
+    type Storage = Box<[IValue]>;
+    type Delta = [IValueDelta];
+    type DeltaStorage = Box<[IValueDelta]>;
 
     fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
-        IArrayDelta(v.0.iter().map(|x| self.0.fold(&x.0)).collect())
+        v.iter().map(|x| self.0.fold(&x.0)).collect()
     }
 
     fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
-        IArray(d.0.iter().map(|x| IValue(self.0.unfold(x))).collect())
+        d.iter().map(|x| IValue(self.0.unfold(x))).collect()
     }
-}
-
-#[cfg_attr(feature = "serde", derive(Serialize_tuple, Deserialize_tuple))]
-pub struct IObjectDelta {
-    map: Box<[(i32, IValueDelta)]>,
 }
 
 #[derive(Default)]
@@ -411,43 +382,35 @@ pub struct IObjectAccumulator {
 }
 
 impl Accumulator for IObjectAccumulator {
-    type Value = IObject;
-    type Storage = IObject;
-    type Delta = IObjectDelta;
-    type DeltaStorage = IObjectDelta;
+    type Value = [(InternedStrKey, IValue)];
+    type Storage = Box<[(InternedStrKey, IValue)]>;
+    type Delta = [(i32, IValueDelta)];
+    type DeltaStorage = Box<[(i32, IValueDelta)]>;
 
     fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
         let mut key = 0;
-        IObjectDelta {
-            map: v
-                .map
-                .iter()
-                .map(|(k, x)| {
-                    let k = k.id();
-                    let kdiff = k.wrapping_sub(key);
-                    key = k;
-                    let acc = self.map.entry(k).or_default();
-                    let xdiff = acc.fold(&x.0);
-                    (kdiff as i32, xdiff)
-                })
-                .collect(),
-        }
+        v.iter()
+            .map(|(k, x)| {
+                let k = k.0.id();
+                let kdiff = k.wrapping_sub(key);
+                key = k;
+                let acc = self.map.entry(k).or_default();
+                let xdiff = acc.fold(&x.0);
+                (kdiff as i32, xdiff)
+            })
+            .collect()
     }
 
     fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
         let mut key = 0;
-        IObject {
-            map: d
-                .map
-                .iter()
-                .map(|(kdiff, xdiff)| {
-                    let k = (*kdiff as u32).wrapping_add(key);
-                    key = k;
-                    let acc = self.map.entry(k).or_default();
-                    let x = IValue(acc.unfold(xdiff));
-                    (Interned::from_id(k), x)
-                })
-                .collect(),
-        }
+        d.iter()
+            .map(|(kdiff, xdiff)| {
+                let k = (*kdiff as u32).wrapping_add(key);
+                key = k;
+                let acc = self.map.entry(k).or_default();
+                let x = IValue(acc.unfold(xdiff));
+                (InternedStrKey(Interned::from_id(k)), x)
+            })
+            .collect()
     }
 }
