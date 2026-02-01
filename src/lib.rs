@@ -6,12 +6,10 @@
 mod detail;
 
 use blazinterner::{Arena, DeltaEncoding};
-pub use detail::ValueRef;
+use detail::{IArray, IArrayAccumulator, IObject, IObjectAccumulator};
+pub use detail::{IValue, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 #[cfg(feature = "serde")]
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 
@@ -21,8 +19,8 @@ use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct Jinterners {
     string: Arena<str, Box<str>>,
-    iarray: DeltaEncoding<Arena<detail::IArray>, detail::IArrayAccumulator>,
-    iobject: DeltaEncoding<Arena<detail::IObject>, detail::IObjectAccumulator>,
+    iarray: DeltaEncoding<Arena<IArray>, IArrayAccumulator>,
+    iobject: DeltaEncoding<Arena<IObject>, IObjectAccumulator>,
 }
 
 #[cfg(feature = "get-size2")]
@@ -61,41 +59,5 @@ impl Jinterners {
     /// stdout.
     pub fn print_summary_objects(&self, prefix: &str, title: &str, total_bytes: usize) {
         self.iobject.print_summary(prefix, title, total_bytes);
-    }
-}
-
-/// An interned JSON value.
-#[derive(Default, Debug, Hash, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "get-size2", derive(GetSize))]
-pub struct IValue(detail::IValue);
-
-impl IValue {
-    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
-    /// arena.
-    pub fn from(interners: &Jinterners, source: Value) -> Self {
-        Self(detail::IValue::from(interners, source))
-    }
-
-    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
-    /// arena.
-    pub fn from_ref(interners: &Jinterners, source: &Value) -> Self {
-        Self(detail::IValue::from_ref(interners, source))
-    }
-
-    /// Retrieves the corresponding [`serde_json::Value`] inside the given
-    /// [`Jinterners`] arena.
-    pub fn lookup(&self, interners: &Jinterners) -> Value {
-        self.0.lookup(interners)
-    }
-
-    /// Performs a shallow lookup of this value inside the given [`Jinterners`]
-    /// arena.
-    ///
-    /// Contrary to [`lookup()`](Self::lookup), this function doesn't create a
-    /// deep copy of the value, and is therefore likely more efficient if
-    /// you only need to query specific object field(s) or array element(s).
-    pub fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
-        self.0.lookup_ref(interners)
     }
 }

@@ -14,9 +14,45 @@ use std::ops::Deref;
 
 type InternedStr = Interned<str, Box<str>>;
 
+/// An interned JSON value.
+#[derive(Default, Debug, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "get-size2", derive(GetSize))]
+pub struct IValue(IValueImpl);
+
+impl IValue {
+    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
+    /// arena.
+    pub fn from(interners: &Jinterners, source: Value) -> Self {
+        Self(IValueImpl::from(interners, source))
+    }
+
+    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
+    /// arena.
+    pub fn from_ref(interners: &Jinterners, source: &Value) -> Self {
+        Self(IValueImpl::from_ref(interners, source))
+    }
+
+    /// Retrieves the corresponding [`serde_json::Value`] inside the given
+    /// [`Jinterners`] arena.
+    pub fn lookup(&self, interners: &Jinterners) -> Value {
+        self.0.lookup(interners)
+    }
+
+    /// Performs a shallow lookup of this value inside the given [`Jinterners`]
+    /// arena.
+    ///
+    /// Contrary to [`lookup()`](Self::lookup), this function doesn't create a
+    /// deep copy of the value, and is therefore likely more efficient if
+    /// you only need to query specific object field(s) or array element(s).
+    pub fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
+        self.0.lookup_ref(interners)
+    }
+}
+
 #[derive(Default, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Float64(OrderedFloat<f64>);
+struct Float64(OrderedFloat<f64>);
 
 impl Debug for Float64 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -33,7 +69,7 @@ impl GetSize for Float64 {
 #[derive(Default, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
-pub enum IValue {
+enum IValueImpl {
     #[default]
     Null,
     Bool(bool),
@@ -45,22 +81,22 @@ pub enum IValue {
     Object(Interned<IObject>),
 }
 
-impl IValue {
-    pub fn from(interners: &Jinterners, source: Value) -> Self {
+impl IValueImpl {
+    fn from(interners: &Jinterners, source: Value) -> Self {
         match source {
-            Value::Null => IValue::Null,
-            Value::Bool(x) => IValue::Bool(x),
+            Value::Null => IValueImpl::Null,
+            Value::Bool(x) => IValueImpl::Bool(x),
             Value::Number(x) => {
                 if x.is_u64() {
-                    IValue::U64(x.as_u64().unwrap())
+                    IValueImpl::U64(x.as_u64().unwrap())
                 } else if x.is_i64() {
-                    IValue::I64(x.as_i64().unwrap())
+                    IValueImpl::I64(x.as_i64().unwrap())
                 } else {
-                    IValue::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
+                    IValueImpl::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
                 }
             }
-            Value::String(s) => IValue::String(Interned::from(&interners.string, s)),
-            Value::Array(a) => IValue::Array(Interned::from(
+            Value::String(s) => IValueImpl::String(Interned::from(&interners.string, s)),
+            Value::Array(a) => IValueImpl::Array(Interned::from(
                 &interners.iarray,
                 IArray(
                     a.into_iter()
@@ -70,26 +106,26 @@ impl IValue {
             )),
             Value::Object(o) => {
                 let io = IObject::from(interners, o);
-                IValue::Object(Interned::from(&interners.iobject, io))
+                IValueImpl::Object(Interned::from(&interners.iobject, io))
             }
         }
     }
 
-    pub fn from_ref(interners: &Jinterners, source: &Value) -> Self {
+    fn from_ref(interners: &Jinterners, source: &Value) -> Self {
         match source {
-            Value::Null => IValue::Null,
-            Value::Bool(x) => IValue::Bool(*x),
+            Value::Null => IValueImpl::Null,
+            Value::Bool(x) => IValueImpl::Bool(*x),
             Value::Number(x) => {
                 if x.is_u64() {
-                    IValue::U64(x.as_u64().unwrap())
+                    IValueImpl::U64(x.as_u64().unwrap())
                 } else if x.is_i64() {
-                    IValue::I64(x.as_i64().unwrap())
+                    IValueImpl::I64(x.as_i64().unwrap())
                 } else {
-                    IValue::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
+                    IValueImpl::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
                 }
             }
-            Value::String(s) => IValue::String(Interned::from(&interners.string, s.as_str())),
-            Value::Array(a) => IValue::Array(Interned::from(
+            Value::String(s) => IValueImpl::String(Interned::from(&interners.string, s.as_str())),
+            Value::Array(a) => IValueImpl::Array(Interned::from(
                 &interners.iarray,
                 IArray(
                     a.iter()
@@ -99,40 +135,44 @@ impl IValue {
             )),
             Value::Object(o) => {
                 let io = IObject::from_ref(interners, o);
-                IValue::Object(Interned::from(&interners.iobject, io))
+                IValueImpl::Object(Interned::from(&interners.iobject, io))
             }
         }
     }
 
-    pub fn lookup(&self, interners: &Jinterners) -> Value {
+    fn lookup(&self, interners: &Jinterners) -> Value {
         match self {
-            IValue::Null => Value::Null,
-            IValue::Bool(x) => Value::Bool(*x),
-            IValue::U64(x) => Value::Number(Number::from_u128(*x as u128).unwrap()),
-            IValue::I64(x) => Value::Number(Number::from_i128(*x as i128).unwrap()),
-            IValue::F64(Float64(OrderedFloat(x))) => Value::Number(Number::from_f64(*x).unwrap()),
-            IValue::String(s) => Value::String(s.lookup_ref(&interners.string).into()),
-            IValue::Array(a) => Value::Array(
+            IValueImpl::Null => Value::Null,
+            IValueImpl::Bool(x) => Value::Bool(*x),
+            IValueImpl::U64(x) => Value::Number(Number::from_u128(*x as u128).unwrap()),
+            IValueImpl::I64(x) => Value::Number(Number::from_i128(*x as i128).unwrap()),
+            IValueImpl::F64(Float64(OrderedFloat(x))) => {
+                Value::Number(Number::from_f64(*x).unwrap())
+            }
+            IValueImpl::String(s) => Value::String(s.lookup_ref(&interners.string).into()),
+            IValueImpl::Array(a) => Value::Array(
                 a.lookup_ref(&interners.iarray)
                     .0
                     .iter()
                     .map(|v| v.lookup(interners))
                     .collect(),
             ),
-            IValue::Object(o) => Value::Object(o.lookup_ref(&interners.iobject).lookup(interners)),
+            IValueImpl::Object(o) => {
+                Value::Object(o.lookup_ref(&interners.iobject).lookup(interners))
+            }
         }
     }
 
-    pub fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
+    fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
         match self {
-            IValue::Null => ValueRef::Null,
-            IValue::Bool(x) => ValueRef::Bool(*x),
-            IValue::U64(x) => ValueRef::U64(*x),
-            IValue::I64(x) => ValueRef::I64(*x),
-            IValue::F64(Float64(OrderedFloat(x))) => ValueRef::F64(*x),
-            IValue::String(s) => ValueRef::String(s.lookup_ref(&interners.string)),
-            IValue::Array(a) => ValueRef::Array(a.lookup_ref(&interners.iarray).0.deref()),
-            IValue::Object(o) => ValueRef::Object(
+            IValueImpl::Null => ValueRef::Null,
+            IValueImpl::Bool(x) => ValueRef::Bool(*x),
+            IValueImpl::U64(x) => ValueRef::U64(*x),
+            IValueImpl::I64(x) => ValueRef::I64(*x),
+            IValueImpl::F64(Float64(OrderedFloat(x))) => ValueRef::F64(*x),
+            IValueImpl::String(s) => ValueRef::String(s.lookup_ref(&interners.string)),
+            IValueImpl::Array(a) => ValueRef::Array(a.lookup_ref(&interners.iarray).0.deref()),
+            IValueImpl::Object(o) => ValueRef::Object(
                 o.lookup_ref(&interners.iobject)
                     .map
                     .iter()
@@ -251,44 +291,44 @@ impl Default for IValueAccumulator {
 }
 
 impl Accumulator for IValueAccumulator {
-    type Value = IValue;
-    type Storage = IValue;
+    type Value = IValueImpl;
+    type Storage = IValueImpl;
     type Delta = IValueDelta;
 
     fn fold(&mut self, v: &Self::Value) -> Self::Delta {
         match v {
-            IValue::Null => IValueDelta::Null,
-            IValue::Bool(x) => {
+            IValueImpl::Null => IValueDelta::Null,
+            IValueImpl::Bool(x) => {
                 let diff = self.b ^ x;
                 self.b = *x;
                 IValueDelta::Bool(diff)
             }
-            IValue::U64(x) => {
+            IValueImpl::U64(x) => {
                 let diff = x.wrapping_sub(self.u);
                 self.u = *x;
                 IValueDelta::U64(diff as i64)
             }
-            IValue::I64(x) => {
+            IValueImpl::I64(x) => {
                 let diff = x.wrapping_sub(self.i);
                 self.i = *x;
                 IValueDelta::I64(diff)
             }
-            IValue::F64(x) => {
+            IValueImpl::F64(x) => {
                 let diff = x.0.to_bits() ^ self.f.to_bits();
                 self.f = *x.0;
                 IValueDelta::F64(f64::from_bits(diff))
             }
-            IValue::String(x) => {
+            IValueImpl::String(x) => {
                 let diff = x.id().wrapping_sub(self.s);
                 self.s = x.id();
                 IValueDelta::String(diff as i32)
             }
-            IValue::Array(x) => {
+            IValueImpl::Array(x) => {
                 let diff = x.id().wrapping_sub(self.a);
                 self.a = x.id();
                 IValueDelta::Array(diff as i32)
             }
-            IValue::Object(x) => {
+            IValueImpl::Object(x) => {
                 let diff = x.id().wrapping_sub(self.o);
                 self.o = x.id();
                 IValueDelta::Object(diff as i32)
@@ -298,41 +338,41 @@ impl Accumulator for IValueAccumulator {
 
     fn unfold(&mut self, d: Self::Delta) -> Self::Value {
         match d {
-            IValueDelta::Null => IValue::Null,
+            IValueDelta::Null => IValueImpl::Null,
             IValueDelta::Bool(x) => {
                 let x = self.b ^ x;
                 self.b = x;
-                IValue::Bool(x)
+                IValueImpl::Bool(x)
             }
             IValueDelta::U64(x) => {
                 let x = self.u.wrapping_add(x as u64);
                 self.u = x;
-                IValue::U64(x)
+                IValueImpl::U64(x)
             }
             IValueDelta::I64(x) => {
                 let x = self.i.wrapping_add(x);
                 self.i = x;
-                IValue::I64(x)
+                IValueImpl::I64(x)
             }
             IValueDelta::F64(x) => {
                 let x = f64::from_bits(self.f.to_bits() ^ x.to_bits());
                 self.f = x;
-                IValue::F64(Float64(OrderedFloat(x)))
+                IValueImpl::F64(Float64(OrderedFloat(x)))
             }
             IValueDelta::String(x) => {
                 let x = self.s.wrapping_add(x as u32);
                 self.s = x;
-                IValue::String(Interned::from_id(x))
+                IValueImpl::String(Interned::from_id(x))
             }
             IValueDelta::Array(x) => {
                 let x = self.a.wrapping_add(x as u32);
                 self.a = x;
-                IValue::Array(Interned::from_id(x))
+                IValueImpl::Array(Interned::from_id(x))
             }
             IValueDelta::Object(x) => {
                 let x = self.o.wrapping_add(x as u32);
                 self.o = x;
-                IValue::Object(Interned::from_id(x))
+                IValueImpl::Object(Interned::from_id(x))
             }
         }
     }
@@ -350,11 +390,11 @@ impl Accumulator for IArrayAccumulator {
     type Delta = IArrayDelta;
 
     fn fold(&mut self, v: &Self::Value) -> Self::Delta {
-        IArrayDelta(v.0.iter().map(|x| self.0.fold(x)).collect())
+        IArrayDelta(v.0.iter().map(|x| self.0.fold(&x.0)).collect())
     }
 
     fn unfold(&mut self, d: Self::Delta) -> Self::Value {
-        IArray(d.0.into_iter().map(|x| self.0.unfold(x)).collect())
+        IArray(d.0.into_iter().map(|x| IValue(self.0.unfold(x))).collect())
     }
 }
 
@@ -384,7 +424,7 @@ impl Accumulator for IObjectAccumulator {
                     let kdiff = k.wrapping_sub(key);
                     key = k;
                     let acc = self.map.entry(k).or_default();
-                    let xdiff = acc.fold(x);
+                    let xdiff = acc.fold(&x.0);
                     (kdiff as i32, xdiff)
                 })
                 .collect(),
@@ -401,7 +441,7 @@ impl Accumulator for IObjectAccumulator {
                     let k = (kdiff as u32).wrapping_add(key);
                     key = k;
                     let acc = self.map.entry(k).or_default();
-                    let x = acc.unfold(xdiff);
+                    let x = IValue(acc.unfold(xdiff));
                     (Interned::from_id(k), x)
                 })
                 .collect(),
