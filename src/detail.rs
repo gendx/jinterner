@@ -64,7 +64,7 @@ struct Float64(OrderedFloat<f64>);
 
 impl Debug for Float64 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}", self.0.0))
+        self.0.0.fmt(f)
     }
 }
 
