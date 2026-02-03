@@ -5,14 +5,13 @@
 
 mod detail;
 
-use blazinterner::{Arena, ArenaSlice, DeltaEncoding, Interned, InternedSlice};
-use detail::{IArrayAccumulator, IObjectAccumulator, InternedStrKey};
+use blazinterner::{Arena, ArenaSlice, Interned, InternedSlice};
+use detail::InternedStrKey;
 pub use detail::{IValue, Mapping, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 #[cfg(feature = "serde")]
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
-use std::ops::Deref;
 
 /// An arena to store interned JSON values.
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -20,8 +19,8 @@ use std::ops::Deref;
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct Jinterners {
     string: Arena<str, Box<str>>,
-    iarray: DeltaEncoding<ArenaSlice<IValue>, IArrayAccumulator>,
-    iobject: DeltaEncoding<ArenaSlice<(InternedStrKey, IValue)>, IObjectAccumulator>,
+    iarray: ArenaSlice<IValue>,
+    iobject: ArenaSlice<(InternedStrKey, IValue)>,
 }
 
 #[cfg(feature = "get-size2")]
@@ -81,14 +80,8 @@ impl Jinterners {
 
         let mut jinterners = Jinterners {
             string: Arena::with_capacity(self.string.len()),
-            iarray: DeltaEncoding::new(ArenaSlice::with_capacity(
-                self.iarray.slices(),
-                self.iarray.items(),
-            )),
-            iobject: DeltaEncoding::new(ArenaSlice::with_capacity(
-                self.iobject.slices(),
-                self.iobject.items(),
-            )),
+            iarray: ArenaSlice::with_capacity(self.iarray.slices(), self.iarray.items()),
+            iobject: ArenaSlice::with_capacity(self.iobject.slices(), self.iobject.items()),
         };
 
         for i in string_rev {
@@ -128,8 +121,8 @@ impl Jinterners {
     fn optimized_mapping_arrays(&self) -> (Vec<u32>, Box<[u32]>) {
         let mut mapping: Vec<u32> = (0..self.iarray.slices() as u32).collect();
         mapping.sort_by(|i, j| {
-            let a: &[IValue] = InternedSlice::from_id(*i).lookup(self.iarray.deref());
-            let b: &[IValue] = InternedSlice::from_id(*j).lookup(self.iarray.deref());
+            let a: &[IValue] = InternedSlice::from_id(*i).lookup(&self.iarray);
+            let b: &[IValue] = InternedSlice::from_id(*j).lookup(&self.iarray);
             a.len().cmp(&b.len()).then_with(|| a.cmp(b))
         });
 
@@ -140,10 +133,8 @@ impl Jinterners {
     fn optimized_mapping_objects(&self) -> (Vec<u32>, Box<[u32]>) {
         let mut mapping: Vec<u32> = (0..self.iobject.slices() as u32).collect();
         mapping.sort_by(|i, j| {
-            let a: &[(InternedStrKey, IValue)] =
-                InternedSlice::from_id(*i).lookup(self.iobject.deref());
-            let b: &[(InternedStrKey, IValue)] =
-                InternedSlice::from_id(*j).lookup(self.iobject.deref());
+            let a: &[(InternedStrKey, IValue)] = InternedSlice::from_id(*i).lookup(&self.iobject);
+            let b: &[(InternedStrKey, IValue)] = InternedSlice::from_id(*j).lookup(&self.iobject);
             a.len().cmp(&b.len()).then_with(|| a.cmp(b))
         });
 
