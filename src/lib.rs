@@ -12,6 +12,7 @@ pub use detail::{IValue, Mapping, ValueRef};
 use get_size2::GetSize;
 #[cfg(feature = "serde")]
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
+use std::cmp::Ordering;
 
 /// An arena to store interned JSON values.
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -108,11 +109,8 @@ impl Jinterners {
 
     fn optimized_mapping_strings(&self) -> (Vec<u32>, Box<[u32]>) {
         let mut mapping: Vec<u32> = (0..self.string.len() as u32).collect();
-        mapping.sort_by(|i, j| {
-            let a: &str = Interned::from_id(*i).lookup_ref(&self.string);
-            let b: &str = Interned::from_id(*j).lookup_ref(&self.string);
-            a.len().cmp(&b.len()).then_with(|| a.cmp(b))
-        });
+        mapping
+            .sort_by_cached_key(|i| CustomStrOrd(Interned::from_id(*i).lookup_ref(&self.string)));
 
         let reverse = Self::reverse(&mapping);
         (mapping, reverse)
@@ -120,10 +118,8 @@ impl Jinterners {
 
     fn optimized_mapping_arrays(&self) -> (Vec<u32>, Box<[u32]>) {
         let mut mapping: Vec<u32> = (0..self.iarray.slices() as u32).collect();
-        mapping.sort_by(|i, j| {
-            let a: &[IValue] = InternedSlice::from_id(*i).lookup(&self.iarray);
-            let b: &[IValue] = InternedSlice::from_id(*j).lookup(&self.iarray);
-            a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+        mapping.sort_by_cached_key(|i| {
+            CustomSliceOrd(InternedSlice::from_id(*i).lookup(&self.iarray))
         });
 
         let reverse = Self::reverse(&mapping);
@@ -132,10 +128,8 @@ impl Jinterners {
 
     fn optimized_mapping_objects(&self) -> (Vec<u32>, Box<[u32]>) {
         let mut mapping: Vec<u32> = (0..self.iobject.slices() as u32).collect();
-        mapping.sort_by(|i, j| {
-            let a: &[(InternedStrKey, IValue)] = InternedSlice::from_id(*i).lookup(&self.iobject);
-            let b: &[(InternedStrKey, IValue)] = InternedSlice::from_id(*j).lookup(&self.iobject);
-            a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+        mapping.sort_by_cached_key(|i| {
+            CustomSliceOrd(InternedSlice::from_id(*i).lookup(&self.iobject))
         });
 
         let reverse = Self::reverse(&mapping);
@@ -148,5 +142,41 @@ impl Jinterners {
             reverse[mapping[i as usize] as usize] = i;
         }
         reverse.into_boxed_slice()
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct CustomStrOrd<'a>(&'a str);
+
+impl PartialOrd for CustomStrOrd<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CustomStrOrd<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .len()
+            .cmp(&other.0.len())
+            .then_with(|| self.0.cmp(other.0))
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct CustomSliceOrd<'a, T>(&'a [T]);
+
+impl<T: Ord> PartialOrd for CustomSliceOrd<'_, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: Ord> Ord for CustomSliceOrd<'_, T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .len()
+            .cmp(&other.0.len())
+            .then_with(|| self.0.cmp(other.0))
     }
 }
