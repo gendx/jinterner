@@ -23,7 +23,7 @@ impl Default for InternedStrKey {
 }
 
 /// An interned JSON value.
-#[derive(Default, Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct IValue(IValueImpl);
@@ -58,7 +58,7 @@ impl IValue {
     }
 }
 
-#[derive(Default, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 struct Float64(OrderedFloat<f64>);
 
@@ -74,7 +74,7 @@ impl GetSize for Float64 {
     // box.
 }
 
-#[derive(Default, Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 enum IValueImpl {
@@ -412,5 +412,70 @@ impl Accumulator for IObjectAccumulator {
                 (InternedStrKey(Interned::from_id(k)), x)
             })
             .collect()
+    }
+}
+
+/// Mapping to convert values from one [`Jinterners`] instance to another.
+pub struct Mapping {
+    pub(crate) string: Box<[u32]>,
+    pub(crate) iarray: Box<[u32]>,
+    pub(crate) iobject: Box<[u32]>,
+}
+
+impl Mapping {
+    /// Returns the number of strings that are remapped by this mapping.
+    pub fn count_remapped_strings(&self) -> usize {
+        self.string
+            .iter()
+            .enumerate()
+            .filter(|&(i, j)| i != *j as usize)
+            .count()
+    }
+
+    /// Returns the number of arrays that are remapped by this mapping.
+    pub fn count_remapped_arrays(&self) -> usize {
+        self.iarray
+            .iter()
+            .enumerate()
+            .filter(|&(i, j)| i != *j as usize)
+            .count()
+    }
+
+    /// Returns the number of objects that are remapped by this mapping.
+    pub fn count_remapped_objects(&self) -> usize {
+        self.iobject
+            .iter()
+            .enumerate()
+            .filter(|&(i, j)| i != *j as usize)
+            .count()
+    }
+
+    pub(crate) fn map_str_key(&self, s: InternedStrKey) -> InternedStrKey {
+        InternedStrKey(self.map_str(s.0))
+    }
+
+    fn map_str(&self, s: InternedStr) -> InternedStr {
+        Interned::from_id(self.string[s.id() as usize])
+    }
+
+    /// Maps the given value from the source [`Jinterners`] to the destination
+    /// [`Jinterners`] of this mapping.
+    pub fn map(&self, v: IValue) -> IValue {
+        IValue(match v.0 {
+            IValueImpl::Null => IValueImpl::Null,
+            IValueImpl::Bool(x) => IValueImpl::Bool(x),
+            IValueImpl::U64(x) => IValueImpl::U64(x),
+            IValueImpl::I64(x) => IValueImpl::I64(x),
+            IValueImpl::F64(x) => IValueImpl::F64(x),
+            IValueImpl::String(x) => {
+                IValueImpl::String(Interned::from_id(self.string[x.id() as usize]))
+            }
+            IValueImpl::Array(x) => {
+                IValueImpl::Array(InternedSlice::from_id(self.iarray[x.id() as usize]))
+            }
+            IValueImpl::Object(x) => {
+                IValueImpl::Object(InternedSlice::from_id(self.iobject[x.id() as usize]))
+            }
+        })
     }
 }
