@@ -6,7 +6,6 @@ use ordered_float::OrderedFloat;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
-use std::collections::HashMap;
 use std::fmt::Debug;
 
 type InternedStr = Interned<str, Box<str>>;
@@ -201,12 +200,13 @@ impl IValueImpl {
             IValueImpl::F64(Float64(OrderedFloat(x))) => ValueRef::F64(*x),
             IValueImpl::String(s) => ValueRef::String(s.lookup_ref(&interners.string)),
             IValueImpl::Array(a) => ValueRef::Array(a.lookup(&interners.iarray)),
-            IValueImpl::Object(o) => ValueRef::Object(
-                o.lookup(&interners.iobject)
+            IValueImpl::Object(o) => ValueRef::Object(MapRef {
+                map: o
+                    .lookup(&interners.iobject)
                     .iter()
                     .map(|(k, v)| (k.0.lookup_ref(&interners.string), v))
                     .collect(),
-            ),
+            }),
         }
     }
 }
@@ -228,7 +228,19 @@ pub enum ValueRef<'a> {
     /// JSON array.
     Array(&'a [IValue]),
     /// JSON object.
-    Object(HashMap<&'a str, &'a IValue>),
+    Object(MapRef<'a>),
+}
+
+/// A shallow reference to a JSON map.
+pub struct MapRef<'a> {
+    map: Box<[(&'a str, &'a IValue)]>,
+}
+
+impl<'a> MapRef<'a> {
+    /// Iterates over the key-value pairs in this JSON map, in arbitrary order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&'a str, &'a IValue)> {
+        self.map.iter().copied()
+    }
 }
 
 #[cfg(all(feature = "delta", feature = "serde"))]
@@ -239,6 +251,7 @@ mod delta {
     use serde::de::{Error, SeqAccess, Visitor};
     use serde::ser::SerializeTuple;
     use serde::{Deserializer, Serializer};
+    use std::collections::HashMap;
 
     impl Serialize for DeltaEncoding<Jinterners> {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
