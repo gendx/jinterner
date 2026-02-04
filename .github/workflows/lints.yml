@@ -19,6 +19,10 @@ jobs:
       - name: Check Clippy lints (all features)
         run: cargo clippy --verbose --all --all-features
 
+      - name: Check Clippy lints (debug feature)
+        run: cargo clippy --verbose --all --no-default-features --features=debug
+      - name: Check Clippy lints (delta feature)
+        run: cargo clippy --verbose --all --no-default-features --features=delta
       - name: Check Clippy lints (get-size2 feature)
         run: cargo clippy --verbose --all --no-default-features --features=get-size2
       - name: Check Clippy lints (serde feature)

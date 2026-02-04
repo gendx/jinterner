@@ -1,5 +1,5 @@
 use super::Jinterners;
-use blazinterner::{Accumulator, Interned, InternedSlice};
+use blazinterner::{Interned, InternedSlice};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 use ordered_float::OrderedFloat;
@@ -231,187 +231,261 @@ pub enum ValueRef<'a> {
     Object(HashMap<&'a str, &'a IValue>),
 }
 
-/// Difference between two JSON values, for better delta encoding
-/// serialization.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum IValueDelta {
-    Null,
-    Bool(bool),
-    U64(i64),
-    I64(i64),
-    F64(f64),
-    String(i32),
-    Array(i32),
-    Object(i32),
-}
+#[cfg(all(feature = "delta", feature = "serde"))]
+mod delta {
+    use super::*;
+    use crate::DeltaEncoding;
+    use blazinterner::{Accumulator, ArenaSlice, DeltaEncoding as RawDeltaEncoding};
+    use serde::de::{Error, SeqAccess, Visitor};
+    use serde::ser::SerializeTuple;
+    use serde::{Deserializer, Serializer};
 
-struct IValueAccumulator {
-    b: bool,
-    u: u64,
-    i: i64,
-    f: f64,
-    s: u32,
-    a: u32,
-    o: u32,
-}
+    impl Serialize for DeltaEncoding<Jinterners> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let mut tuple = serializer.serialize_tuple(3)?;
 
-impl Default for IValueAccumulator {
-    fn default() -> Self {
-        Self {
-            b: false,
-            u: 0,
-            i: 0,
-            f: f64::from_bits(0),
-            s: 0,
-            a: 0,
-            o: 0,
-        }
-    }
-}
+            tuple.serialize_element(&self.inner.string)?;
 
-impl Accumulator for IValueAccumulator {
-    type Value = IValueImpl;
-    type Storage = IValueImpl;
-    type Delta = IValueDelta;
-    type DeltaStorage = IValueDelta;
+            let iarray: RawDeltaEncoding<_, IArrayAccumulator> =
+                RawDeltaEncoding::new(&self.inner.iarray);
+            tuple.serialize_element(&iarray)?;
 
-    fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
-        match v {
-            IValueImpl::Null => IValueDelta::Null,
-            IValueImpl::Bool(x) => {
-                let diff = self.b ^ x;
-                self.b = *x;
-                IValueDelta::Bool(diff)
-            }
-            IValueImpl::U64(x) => {
-                let diff = x.wrapping_sub(self.u);
-                self.u = *x;
-                IValueDelta::U64(diff as i64)
-            }
-            IValueImpl::I64(x) => {
-                let diff = x.wrapping_sub(self.i);
-                self.i = *x;
-                IValueDelta::I64(diff)
-            }
-            IValueImpl::F64(x) => {
-                let diff = x.0.to_bits() ^ self.f.to_bits();
-                self.f = *x.0;
-                IValueDelta::F64(f64::from_bits(diff))
-            }
-            IValueImpl::String(x) => {
-                let diff = x.id().wrapping_sub(self.s);
-                self.s = x.id();
-                IValueDelta::String(diff as i32)
-            }
-            IValueImpl::Array(x) => {
-                let diff = x.id().wrapping_sub(self.a);
-                self.a = x.id();
-                IValueDelta::Array(diff as i32)
-            }
-            IValueImpl::Object(x) => {
-                let diff = x.id().wrapping_sub(self.o);
-                self.o = x.id();
-                IValueDelta::Object(diff as i32)
-            }
+            let iobject: RawDeltaEncoding<_, IObjectAccumulator> =
+                RawDeltaEncoding::new(&self.inner.iobject);
+            tuple.serialize_element(&iobject)?;
+
+            tuple.end()
         }
     }
 
-    fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
-        match d {
-            IValueDelta::Null => IValueImpl::Null,
-            IValueDelta::Bool(x) => {
-                let x = self.b ^ x;
-                self.b = x;
-                IValueImpl::Bool(x)
-            }
-            IValueDelta::U64(x) => {
-                let x = self.u.wrapping_add(*x as u64);
-                self.u = x;
-                IValueImpl::U64(x)
-            }
-            IValueDelta::I64(x) => {
-                let x = self.i.wrapping_add(*x);
-                self.i = x;
-                IValueImpl::I64(x)
-            }
-            IValueDelta::F64(x) => {
-                let x = f64::from_bits(self.f.to_bits() ^ x.to_bits());
-                self.f = x;
-                IValueImpl::F64(Float64(OrderedFloat(x)))
-            }
-            IValueDelta::String(x) => {
-                let x = self.s.wrapping_add(*x as u32);
-                self.s = x;
-                IValueImpl::String(Interned::from_id(x))
-            }
-            IValueDelta::Array(x) => {
-                let x = self.a.wrapping_add(*x as u32);
-                self.a = x;
-                IValueImpl::Array(InternedSlice::from_id(x))
-            }
-            IValueDelta::Object(x) => {
-                let x = self.o.wrapping_add(*x as u32);
-                self.o = x;
-                IValueImpl::Object(InternedSlice::from_id(x))
+    impl<'de> Deserialize<'de> for DeltaEncoding<Jinterners> {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_tuple(3, DeltaJinternersVisitor)
+        }
+    }
+
+    struct DeltaJinternersVisitor;
+
+    impl<'de> Visitor<'de> for DeltaJinternersVisitor {
+        type Value = DeltaEncoding<Jinterners>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a tuple with 3 elements")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let string = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+            let iarray: RawDeltaEncoding<ArenaSlice<IValue>, IArrayAccumulator> = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+            let iobject: RawDeltaEncoding<
+                ArenaSlice<(InternedStrKey, IValue)>,
+                IObjectAccumulator,
+            > = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::invalid_length(2, &self))?;
+
+            Ok(DeltaEncoding::new(Jinterners {
+                string,
+                iarray: iarray.into_inner(),
+                iobject: iobject.into_inner(),
+            }))
+        }
+    }
+
+    /// Difference between two JSON values, for better delta encoding
+    /// serialization.
+    #[derive(Serialize, Deserialize)]
+    pub enum IValueDelta {
+        Null,
+        Bool(bool),
+        U64(i64),
+        I64(i64),
+        F64(f64),
+        String(i32),
+        Array(i32),
+        Object(i32),
+    }
+
+    struct IValueAccumulator {
+        b: bool,
+        u: u64,
+        i: i64,
+        f: f64,
+        s: u32,
+        a: u32,
+        o: u32,
+    }
+
+    impl Default for IValueAccumulator {
+        fn default() -> Self {
+            Self {
+                b: false,
+                u: 0,
+                i: 0,
+                f: f64::from_bits(0),
+                s: 0,
+                a: 0,
+                o: 0,
             }
         }
     }
-}
 
-#[derive(Default)]
-pub struct IArrayAccumulator(IValueAccumulator);
+    impl Accumulator for IValueAccumulator {
+        type Value = IValueImpl;
+        type Storage = IValueImpl;
+        type Delta = IValueDelta;
+        type DeltaStorage = IValueDelta;
 
-impl Accumulator for IArrayAccumulator {
-    type Value = [IValue];
-    type Storage = Box<[IValue]>;
-    type Delta = [IValueDelta];
-    type DeltaStorage = Box<[IValueDelta]>;
+        fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
+            match v {
+                IValueImpl::Null => IValueDelta::Null,
+                IValueImpl::Bool(x) => {
+                    let diff = self.b ^ x;
+                    self.b = *x;
+                    IValueDelta::Bool(diff)
+                }
+                IValueImpl::U64(x) => {
+                    let diff = x.wrapping_sub(self.u);
+                    self.u = *x;
+                    IValueDelta::U64(diff as i64)
+                }
+                IValueImpl::I64(x) => {
+                    let diff = x.wrapping_sub(self.i);
+                    self.i = *x;
+                    IValueDelta::I64(diff)
+                }
+                IValueImpl::F64(x) => {
+                    let diff = x.0.to_bits() ^ self.f.to_bits();
+                    self.f = *x.0;
+                    IValueDelta::F64(f64::from_bits(diff))
+                }
+                IValueImpl::String(x) => {
+                    let diff = x.id().wrapping_sub(self.s);
+                    self.s = x.id();
+                    IValueDelta::String(diff as i32)
+                }
+                IValueImpl::Array(x) => {
+                    let diff = x.id().wrapping_sub(self.a);
+                    self.a = x.id();
+                    IValueDelta::Array(diff as i32)
+                }
+                IValueImpl::Object(x) => {
+                    let diff = x.id().wrapping_sub(self.o);
+                    self.o = x.id();
+                    IValueDelta::Object(diff as i32)
+                }
+            }
+        }
 
-    fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
-        v.iter().map(|x| self.0.fold(&x.0)).collect()
+        fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
+            match d {
+                IValueDelta::Null => IValueImpl::Null,
+                IValueDelta::Bool(x) => {
+                    let x = self.b ^ x;
+                    self.b = x;
+                    IValueImpl::Bool(x)
+                }
+                IValueDelta::U64(x) => {
+                    let x = self.u.wrapping_add(*x as u64);
+                    self.u = x;
+                    IValueImpl::U64(x)
+                }
+                IValueDelta::I64(x) => {
+                    let x = self.i.wrapping_add(*x);
+                    self.i = x;
+                    IValueImpl::I64(x)
+                }
+                IValueDelta::F64(x) => {
+                    let x = f64::from_bits(self.f.to_bits() ^ x.to_bits());
+                    self.f = x;
+                    IValueImpl::F64(Float64(OrderedFloat(x)))
+                }
+                IValueDelta::String(x) => {
+                    let x = self.s.wrapping_add(*x as u32);
+                    self.s = x;
+                    IValueImpl::String(Interned::from_id(x))
+                }
+                IValueDelta::Array(x) => {
+                    let x = self.a.wrapping_add(*x as u32);
+                    self.a = x;
+                    IValueImpl::Array(InternedSlice::from_id(x))
+                }
+                IValueDelta::Object(x) => {
+                    let x = self.o.wrapping_add(*x as u32);
+                    self.o = x;
+                    IValueImpl::Object(InternedSlice::from_id(x))
+                }
+            }
+        }
     }
 
-    fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
-        d.iter().map(|x| IValue(self.0.unfold(x))).collect()
-    }
-}
+    #[derive(Default)]
+    pub struct IArrayAccumulator(IValueAccumulator);
 
-#[derive(Default)]
-pub struct IObjectAccumulator {
-    map: HashMap<u32, IValueAccumulator>,
-}
+    impl Accumulator for IArrayAccumulator {
+        type Value = [IValue];
+        type Storage = Box<[IValue]>;
+        type Delta = [IValueDelta];
+        type DeltaStorage = Box<[IValueDelta]>;
 
-impl Accumulator for IObjectAccumulator {
-    type Value = [(InternedStrKey, IValue)];
-    type Storage = Box<[(InternedStrKey, IValue)]>;
-    type Delta = [(i32, IValueDelta)];
-    type DeltaStorage = Box<[(i32, IValueDelta)]>;
+        fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
+            v.iter().map(|x| self.0.fold(&x.0)).collect()
+        }
 
-    fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
-        let mut key = 0;
-        v.iter()
-            .map(|(k, x)| {
-                let k = k.0.id();
-                let kdiff = k.wrapping_sub(key);
-                key = k;
-                let acc = self.map.entry(k).or_default();
-                let xdiff = acc.fold(&x.0);
-                (kdiff as i32, xdiff)
-            })
-            .collect()
+        fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
+            d.iter().map(|x| IValue(self.0.unfold(x))).collect()
+        }
     }
 
-    fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
-        let mut key = 0;
-        d.iter()
-            .map(|(kdiff, xdiff)| {
-                let k = (*kdiff as u32).wrapping_add(key);
-                key = k;
-                let acc = self.map.entry(k).or_default();
-                let x = IValue(acc.unfold(xdiff));
-                (InternedStrKey(Interned::from_id(k)), x)
-            })
-            .collect()
+    #[derive(Default)]
+    pub struct IObjectAccumulator {
+        map: HashMap<u32, IValueAccumulator>,
+    }
+
+    impl Accumulator for IObjectAccumulator {
+        type Value = [(InternedStrKey, IValue)];
+        type Storage = Box<[(InternedStrKey, IValue)]>;
+        type Delta = [(i32, IValueDelta)];
+        type DeltaStorage = Box<[(i32, IValueDelta)]>;
+
+        fn fold(&mut self, v: &Self::Value) -> Self::DeltaStorage {
+            let mut key = 0;
+            v.iter()
+                .map(|(k, x)| {
+                    let k = k.0.id();
+                    let kdiff = k.wrapping_sub(key);
+                    key = k;
+                    let acc = self.map.entry(k).or_default();
+                    let xdiff = acc.fold(&x.0);
+                    (kdiff as i32, xdiff)
+                })
+                .collect()
+        }
+
+        fn unfold(&mut self, d: &Self::Delta) -> Self::Storage {
+            let mut key = 0;
+            d.iter()
+                .map(|(kdiff, xdiff)| {
+                    let k = (*kdiff as u32).wrapping_add(key);
+                    key = k;
+                    let acc = self.map.entry(k).or_default();
+                    let x = IValue(acc.unfold(xdiff));
+                    (InternedStrKey(Interned::from_id(k)), x)
+                })
+                .collect()
+        }
     }
 }
 

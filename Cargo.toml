@@ -12,18 +12,19 @@ edition = "2024"
 rust-version = "1.91.0"
 
 [package.metadata.docs.rs]
-features = ["debug", "get-size2", "serde"]
+features = ["debug", "delta", "get-size2", "serde"]
 rustdoc-args = ["--cfg", "docsrs", "--generate-link-to-definition"]
 
 [features]
 default = []
-debug = ["blazinterner/debug"]
+debug = ["get-size2", "blazinterner/debug"]
+delta = ["blazinterner/delta"]
 get-size2 = ["dep:get-size2", "blazinterner/get-size2"]
 serde = ["dep:serde", "dep:serde_tuple", "blazinterner/serde"]
 
 [dependencies]
 get-size2 = { optional = true, version = "0.7.4", features = ["derive"] }
-blazinterner = { version = "0.2.2", features = ["delta", "raw"] }
+blazinterner = { version = "0.2.3", features = ["raw"] }
 ordered-float = { version = "5.1.0", features = ["serde"] }
 serde = { optional = true, version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
