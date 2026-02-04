@@ -11,7 +11,9 @@ use blazinterner::{Arena, ArenaSlice, Interned, InternedSlice};
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
 use detail::InternedStrKey;
-pub use detail::{IValue, Mapping, ValueRef};
+pub use detail::mapping::Mapping;
+use detail::mapping::{MappingNoStrings, MappingStrings, RevMappingImpl};
+pub use detail::{IValue, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 #[cfg(feature = "serde")]
@@ -68,20 +70,88 @@ impl Jinterners {
 }
 
 impl Jinterners {
-    /// Returns an optimized version of this [`Jinterners`].
+    /// Returns an optimized version of this [`Jinterners`], or [`None`] if the
+    /// iteration `limit` is set to zero.
     ///
     /// [`IValue`]s rooted in this [`Jinterners`] need to be converted using the
     /// resulting [`Mapping`] to be used in the destination [`Jinterners`].
-    pub fn optimize(&self) -> (Jinterners, Mapping) {
-        let (string_rev, string) = self.optimized_mapping_strings();
-        let (iarray_rev, iarray) = self.optimized_mapping_arrays();
-        let (iobject_rev, iobject) = self.optimized_mapping_objects();
+    pub fn optimize(&self, limit: Option<usize>) -> Option<(Jinterners, Mapping)> {
+        if limit == Some(0) {
+            return None;
+        }
+
+        let mut optimized = self.optimize_once_strings().map(|(jinterners, mapping)| {
+            let mapping = mapping.promote(
+                jinterners.iarray.slices() as u32,
+                jinterners.iobject.slices() as u32,
+            );
+            (jinterners, mapping)
+        });
+
+        let mut i = 0;
+        loop {
+            if limit == Some(i) {
+                break;
+            }
+
+            let jinterners = match optimized {
+                None => self,
+                Some((ref jinterners, _)) => jinterners,
+            };
+            let (jinterners, mapping) = match jinterners.optimize_once_no_strings() {
+                None => break,
+                Some((iarray, iobject, mapping_opt)) => match optimized {
+                    None => {
+                        let num_strings = self.string.len() as u32;
+                        let mut string = Arena::with_capacity(self.string.len());
+                        for i in 0..num_strings {
+                            string.push_mut(Interned::from_id(i).lookup_ref(&self.string).into());
+                        }
+
+                        (
+                            Jinterners {
+                                string,
+                                iarray,
+                                iobject,
+                            },
+                            mapping_opt.promote(num_strings),
+                        )
+                    }
+                    Some((mut jinterners, mapping)) => {
+                        jinterners.iarray = iarray;
+                        jinterners.iobject = iobject;
+                        (jinterners, mapping.compose(mapping_opt))
+                    }
+                },
+            };
+            optimized = Some((jinterners, mapping));
+
+            i = i.wrapping_add(1);
+        }
+        optimized
+    }
+
+    /// Returns a partially optimized version of this [`Jinterners`], or
+    /// [`None`] if this instance was already optimized.
+    ///
+    /// This only runs one iteration of the optimization routine, so you may
+    /// want to use [`optimize()`](Self::optimize) instead.
+    ///
+    /// [`IValue`]s rooted in this [`Jinterners`] need to be converted using the
+    /// resulting [`Mapping`] to be used in the destination [`Jinterners`].
+    pub fn optimize_once(&self) -> Option<(Jinterners, Mapping)> {
+        let string_rev = self.optimized_mapping_strings();
+        let iarray_rev = self.optimized_mapping_arrays();
+        let iobject_rev = self.optimized_mapping_objects();
 
         let mapping = Mapping {
-            string,
-            iarray,
-            iobject,
+            string: string_rev.reverse(),
+            iarray: iarray_rev.reverse(),
+            iobject: iobject_rev.reverse(),
         };
+        if mapping.is_identity() {
+            return None;
+        }
 
         let mut jinterners = Jinterners {
             string: Arena::with_capacity(self.string.len()),
@@ -89,17 +159,17 @@ impl Jinterners {
             iobject: ArenaSlice::with_capacity(self.iobject.slices(), self.iobject.items()),
         };
 
-        for i in string_rev {
+        for i in string_rev.iter() {
             jinterners
                 .string
                 .push_mut(Interned::from_id(i).lookup_ref(&self.string).into());
         }
-        for i in iarray_rev {
+        for i in iarray_rev.iter() {
             let array = InternedSlice::from_id(i).lookup(&self.iarray);
             let array: Box<[_]> = array.iter().map(|ivalue| mapping.map(*ivalue)).collect();
             jinterners.iarray.push_mut(&array);
         }
-        for i in iobject_rev {
+        for i in iobject_rev.iter() {
             let object = InternedSlice::from_id(i).lookup(&self.iobject);
             let object: Box<[_]> = object
                 .iter()
@@ -108,44 +178,107 @@ impl Jinterners {
             jinterners.iobject.push_mut(&object);
         }
 
-        (jinterners, mapping)
+        Some((jinterners, mapping))
     }
 
-    fn optimized_mapping_strings(&self) -> (Vec<u32>, Box<[u32]>) {
+    fn optimize_once_strings(&self) -> Option<(Jinterners, MappingStrings)> {
+        let string_rev = self.optimized_mapping_strings();
+        let mapping = MappingStrings {
+            string: string_rev.reverse(),
+        };
+
+        if mapping.is_identity() {
+            return None;
+        }
+
+        let mut jinterners = Jinterners {
+            string: Arena::with_capacity(self.string.len()),
+            iarray: ArenaSlice::with_capacity(self.iarray.slices(), self.iarray.items()),
+            iobject: ArenaSlice::with_capacity(self.iobject.slices(), self.iobject.items()),
+        };
+
+        for i in string_rev.iter() {
+            jinterners
+                .string
+                .push_mut(Interned::from_id(i).lookup_ref(&self.string).into());
+        }
+        for i in 0..self.iarray.slices() as u32 {
+            let array = InternedSlice::from_id(i).lookup(&self.iarray);
+            let array: Box<[_]> = array.iter().map(|ivalue| mapping.map(*ivalue)).collect();
+            jinterners.iarray.push_mut(&array);
+        }
+        for i in 0..self.iobject.slices() as u32 {
+            let object = InternedSlice::from_id(i).lookup(&self.iobject);
+            let object: Box<[_]> = object
+                .iter()
+                .map(|(k, ivalue)| (mapping.map_str_key(*k), mapping.map(*ivalue)))
+                .collect();
+            jinterners.iobject.push_mut(&object);
+        }
+
+        Some((jinterners, mapping))
+    }
+
+    #[expect(clippy::type_complexity)]
+    fn optimize_once_no_strings(
+        &self,
+    ) -> Option<(
+        ArenaSlice<IValue>,
+        ArenaSlice<(InternedStrKey, IValue)>,
+        MappingNoStrings,
+    )> {
+        let iarray_rev = self.optimized_mapping_arrays();
+        let iobject_rev = self.optimized_mapping_objects();
+
+        let mapping = MappingNoStrings {
+            iarray: iarray_rev.reverse(),
+            iobject: iobject_rev.reverse(),
+        };
+        if mapping.is_identity() {
+            return None;
+        }
+
+        let mut iarray = ArenaSlice::with_capacity(self.iarray.slices(), self.iarray.items());
+        for i in iarray_rev.iter() {
+            let array = InternedSlice::from_id(i).lookup(&self.iarray);
+            let array: Box<[_]> = array.iter().map(|ivalue| mapping.map(*ivalue)).collect();
+            iarray.push_mut(&array);
+        }
+
+        let mut iobject = ArenaSlice::with_capacity(self.iobject.slices(), self.iobject.items());
+        for i in iobject_rev.iter() {
+            let object = InternedSlice::from_id(i).lookup(&self.iobject);
+            let object: Box<[_]> = object
+                .iter()
+                .map(|(k, ivalue)| (*k, mapping.map(*ivalue)))
+                .collect();
+            iobject.push_mut(&object);
+        }
+
+        Some((iarray, iobject, mapping))
+    }
+
+    fn optimized_mapping_strings(&self) -> RevMappingImpl {
         let mut mapping: Vec<u32> = (0..self.string.len() as u32).collect();
         mapping
             .sort_by_cached_key(|i| CustomStrOrd(Interned::from_id(*i).lookup_ref(&self.string)));
-
-        let reverse = Self::reverse(&mapping);
-        (mapping, reverse)
+        RevMappingImpl(mapping.into_boxed_slice())
     }
 
-    fn optimized_mapping_arrays(&self) -> (Vec<u32>, Box<[u32]>) {
+    fn optimized_mapping_arrays(&self) -> RevMappingImpl {
         let mut mapping: Vec<u32> = (0..self.iarray.slices() as u32).collect();
         mapping.sort_by_cached_key(|i| {
             CustomSliceOrd(InternedSlice::from_id(*i).lookup(&self.iarray))
         });
-
-        let reverse = Self::reverse(&mapping);
-        (mapping, reverse)
+        RevMappingImpl(mapping.into_boxed_slice())
     }
 
-    fn optimized_mapping_objects(&self) -> (Vec<u32>, Box<[u32]>) {
+    fn optimized_mapping_objects(&self) -> RevMappingImpl {
         let mut mapping: Vec<u32> = (0..self.iobject.slices() as u32).collect();
         mapping.sort_by_cached_key(|i| {
             CustomSliceOrd(InternedSlice::from_id(*i).lookup(&self.iobject))
         });
-
-        let reverse = Self::reverse(&mapping);
-        (mapping, reverse)
-    }
-
-    fn reverse(mapping: &[u32]) -> Box<[u32]> {
-        let mut reverse = vec![0; mapping.len()];
-        for i in 0..mapping.len() as u32 {
-            reverse[mapping[i as usize] as usize] = i;
-        }
-        reverse.into_boxed_slice()
+        RevMappingImpl(mapping.into_boxed_slice())
     }
 }
 
