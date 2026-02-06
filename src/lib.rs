@@ -276,7 +276,7 @@ impl Jinterners {
     fn optimized_mapping_objects(&self) -> RevMappingImpl {
         let mut mapping: Vec<u32> = (0..self.iobject.slices() as u32).collect();
         mapping.sort_by_cached_key(|i| {
-            CustomSliceOrd(InternedSlice::from_id(*i).lookup(&self.iobject))
+            CustomObjectOrd(InternedSlice::from_id(*i).lookup(&self.iobject))
         });
         RevMappingImpl(mapping.into_boxed_slice())
     }
@@ -315,5 +315,34 @@ impl<T: Ord> Ord for CustomSliceOrd<'_, T> {
             .len()
             .cmp(&other.0.len())
             .then_with(|| self.0.cmp(other.0))
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct CustomObjectOrd<'a>(&'a [(InternedStrKey, IValue)]);
+
+impl PartialOrd for CustomObjectOrd<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CustomObjectOrd<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .len()
+            .cmp(&other.0.len())
+            .then_with(|| {
+                self.0
+                    .iter()
+                    .map(|(k, _)| k)
+                    .cmp(other.0.iter().map(|(k, _)| k))
+            })
+            .then_with(|| {
+                self.0
+                    .iter()
+                    .map(|(_, v)| v)
+                    .cmp(other.0.iter().map(|(_, v)| v))
+            })
     }
 }
