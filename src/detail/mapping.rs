@@ -1,7 +1,8 @@
 use super::{IValue, IValueImpl, InternedStr, InternedStrKey};
 use blazinterner::{Interned, InternedSlice};
 
-/// Mapping to convert values from one [`Jinterners`] instance to another.
+/// Mapping to convert values from one [`Jinterners`](crate::Jinterners)
+/// instance to another.
 pub struct Mapping {
     pub(crate) string: MappingImpl,
     pub(crate) iarray: MappingImpl,
@@ -47,8 +48,8 @@ impl Mapping {
         Interned::from_id(self.string.at(s.id()))
     }
 
-    /// Maps the given value from the source [`Jinterners`] to the destination
-    /// [`Jinterners`] of this mapping.
+    /// Maps the given value from the source [`Jinterners`](crate::Jinterners)
+    /// to the destination [`Jinterners`](crate::Jinterners) of this mapping.
     pub fn map(&self, v: IValue) -> IValue {
         IValue(match v.0 {
             IValueImpl::Null => IValueImpl::Null,
@@ -67,7 +68,8 @@ impl Mapping {
     }
 }
 
-/// Mapping to convert values from one [`Jinterners`] instance to another.
+/// Mapping to convert values from one [`Jinterners`](crate::Jinterners)
+/// instance to another.
 pub(crate) struct MappingStrings {
     pub(crate) string: MappingImpl,
 }
@@ -94,8 +96,8 @@ impl MappingStrings {
         Interned::from_id(self.string.at(s.id()))
     }
 
-    /// Maps the given value from the source [`Jinterners`] to the destination
-    /// [`Jinterners`] of this mapping.
+    /// Maps the given value from the source [`Jinterners`](crate::Jinterners)
+    /// to the destination [`Jinterners`](crate::Jinterners) of this mapping.
     pub fn map(&self, v: IValue) -> IValue {
         IValue(match v.0 {
             IValueImpl::Null => IValueImpl::Null,
@@ -110,7 +112,8 @@ impl MappingStrings {
     }
 }
 
-/// Mapping to convert values from one [`Jinterners`] instance to another.
+/// Mapping to convert values from one [`Jinterners`](crate::Jinterners)
+/// instance to another.
 pub(crate) struct MappingNoStrings {
     pub(crate) iarray: MappingImpl,
     pub(crate) iobject: MappingImpl,
@@ -130,8 +133,8 @@ impl MappingNoStrings {
         self.iarray.is_identity() && self.iobject.is_identity()
     }
 
-    /// Maps the given value from the source [`Jinterners`] to the destination
-    /// [`Jinterners`] of this mapping.
+    /// Maps the given value from the source [`Jinterners`](crate::Jinterners)
+    /// to the destination [`Jinterners`](crate::Jinterners) of this mapping.
     pub fn map(&self, v: IValue) -> IValue {
         IValue(match v.0 {
             IValueImpl::Null => IValueImpl::Null,
