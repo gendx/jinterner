@@ -171,10 +171,11 @@ impl Jinterners {
         }
         for i in iobject_rev.iter() {
             let object = InternedSlice::from_id(i).lookup(&self.iobject);
-            let object: Box<[_]> = object
+            let mut object: Box<[_]> = object
                 .iter()
                 .map(|(k, ivalue)| (mapping.map_str_key(*k), mapping.map(*ivalue)))
                 .collect();
+            object.sort_unstable_by_key(|(k, _)| *k);
             jinterners.iobject.push_mut(&object);
         }
 
@@ -209,10 +210,11 @@ impl Jinterners {
         }
         for i in 0..self.iobject.slices() as u32 {
             let object = InternedSlice::from_id(i).lookup(&self.iobject);
-            let object: Box<[_]> = object
+            let mut object: Box<[_]> = object
                 .iter()
                 .map(|(k, ivalue)| (mapping.map_str_key(*k), mapping.map(*ivalue)))
                 .collect();
+            object.sort_unstable_by_key(|(k, _)| *k);
             jinterners.iobject.push_mut(&object);
         }
 
