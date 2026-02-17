@@ -18,10 +18,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 use std::fmt::Debug;
 
+/// An interned key for JSON objects.
+///
+/// You can obtain a key with [`Jinterners::find_key()`] and use it to lookup
+/// values in JSON objects with [`MapRef::get_by_key()`].
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
-pub struct InternedStrKey(InternedStr);
+pub struct InternedStrKey(pub(crate) InternedStr);
 
 impl Default for InternedStrKey {
     fn default() -> Self {
@@ -270,6 +274,24 @@ pub struct MapRef<'a> {
 }
 
 impl<'a> MapRef<'a> {
+    /// Returns the value associated to the given key, or [`None`] if there is
+    /// no such key in this map.
+    ///
+    /// If you're repeatedly querying the same key, it's more efficient to cache
+    /// it once with [`Jinterners::find_key()`] and then use
+    /// [`get_by_key()`](Self::get_by_key).
+    pub fn get(&self, key: &str) -> Option<&'a IValue> {
+        let k = InternedStrKey(self.arena_str.find(key)?);
+        self.get_by_key(k)
+    }
+
+    /// Returns the value associated to the given key, or [`None`] if there is
+    /// no such key in this map.
+    pub fn get_by_key(&self, key: InternedStrKey) -> Option<&'a IValue> {
+        let i = self.map.binary_search_by_key(&key, |entry| entry.0).ok()?;
+        Some(&self.map[i].1)
+    }
+
     /// Iterates over the key-value pairs in this JSON map, in arbitrary order.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&'a str, &'a IValue)> {
         self.map

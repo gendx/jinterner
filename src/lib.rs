@@ -10,10 +10,9 @@ mod detail;
 use blazinterner::{ArenaSlice, ArenaStr, InternedSlice, InternedStr};
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
-use detail::InternedStrKey;
 pub use detail::mapping::Mapping;
 use detail::mapping::{MappingNoStrings, MappingStrings, RevMappingImpl};
-pub use detail::{IValue, MapRef, ValueRef};
+pub use detail::{IValue, InternedStrKey, MapRef, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 use serde_json::Value;
@@ -79,6 +78,14 @@ impl Jinterners {
     /// Interns the given [`serde_json::Value`] into this arena.
     pub fn intern_ref(&self, source: &Value) -> IValue {
         IValue::from_ref(self, source)
+    }
+
+    /// Retrieves the object key associated to the given string, or [`None`] if
+    /// no such key has been interned in this arena.
+    ///
+    /// This can be useful in combination with [`MapRef::get_by_key()`].
+    pub fn find_key(&self, key: &str) -> Option<InternedStrKey> {
+        self.string.find(key).map(InternedStrKey)
     }
 
     /// Returns an optimized version of this [`Jinterners`], or [`None`] if the
