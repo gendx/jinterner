@@ -1,7 +1,7 @@
 pub mod mapping;
 
 use super::Jinterners;
-use blazinterner::{Interned, InternedSlice};
+use blazinterner::{InternedSlice, InternedStr};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 use ordered_float::OrderedFloat;
@@ -9,8 +9,6 @@ use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 use std::fmt::Debug;
-
-type InternedStr = Interned<str, Box<str>>;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -104,25 +102,26 @@ impl IValueImpl {
                     IValueImpl::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
                 }
             }
-            Value::String(s) => IValueImpl::String(Interned::from(&interners.string, s)),
-            Value::Array(a) => IValueImpl::Array(InternedSlice::from(
-                &interners.iarray,
-                &a.into_iter()
-                    .map(|v| IValue::from(interners, v))
-                    .collect::<Box<[_]>>(),
-            )),
+            Value::String(s) => IValueImpl::String(interners.string.intern(&s)),
+            Value::Array(a) => IValueImpl::Array(
+                interners.iarray.intern_copy(
+                    &a.into_iter()
+                        .map(|v| IValue::from(interners, v))
+                        .collect::<Box<[_]>>(),
+                ),
+            ),
             Value::Object(o) => {
                 let mut io: Box<[_]> = o
                     .into_iter()
                     .map(|(k, v)| {
                         (
-                            InternedStrKey(Interned::from(&interners.string, k)),
+                            InternedStrKey(interners.string.intern(&k)),
                             IValue::from(interners, v),
                         )
                     })
                     .collect();
                 io.sort_unstable_by_key(|(k, _)| *k);
-                IValueImpl::Object(InternedSlice::from(&interners.iobject, &io))
+                IValueImpl::Object(interners.iobject.intern_copy(&io))
             }
         }
     }
@@ -140,25 +139,26 @@ impl IValueImpl {
                     IValueImpl::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
                 }
             }
-            Value::String(s) => IValueImpl::String(Interned::from(&interners.string, s.as_str())),
-            Value::Array(a) => IValueImpl::Array(InternedSlice::from(
-                &interners.iarray,
-                &a.iter()
-                    .map(|v| IValue::from_ref(interners, v))
-                    .collect::<Box<[_]>>(),
-            )),
+            Value::String(s) => IValueImpl::String(interners.string.intern(s.as_str())),
+            Value::Array(a) => IValueImpl::Array(
+                interners.iarray.intern_copy(
+                    &a.iter()
+                        .map(|v| IValue::from_ref(interners, v))
+                        .collect::<Box<[_]>>(),
+                ),
+            ),
             Value::Object(o) => {
                 let mut io: Box<[_]> = o
                     .iter()
                     .map(|(k, v)| {
                         (
-                            InternedStrKey(Interned::from(&interners.string, k.as_str())),
+                            InternedStrKey(interners.string.intern(k.as_str())),
                             IValue::from_ref(interners, v),
                         )
                     })
                     .collect();
                 io.sort_unstable_by_key(|(k, _)| *k);
-                IValueImpl::Object(InternedSlice::from(&interners.iobject, &io))
+                IValueImpl::Object(interners.iobject.intern_copy(&io))
             }
         }
     }
@@ -172,22 +172,21 @@ impl IValueImpl {
             IValueImpl::F64(Float64(OrderedFloat(x))) => {
                 Value::Number(Number::from_f64(*x).unwrap())
             }
-            IValueImpl::String(s) => Value::String(s.lookup_ref(&interners.string).into()),
+            IValueImpl::String(s) => Value::String(interners.string.lookup(*s).into()),
             IValueImpl::Array(a) => Value::Array(
-                a.lookup(&interners.iarray)
+                interners
+                    .iarray
+                    .lookup(*a)
                     .iter()
                     .map(|v| v.lookup(interners))
                     .collect(),
             ),
             IValueImpl::Object(o) => Value::Object(
-                o.lookup(&interners.iobject)
+                interners
+                    .iobject
+                    .lookup(*o)
                     .iter()
-                    .map(|(k, v)| {
-                        (
-                            k.0.lookup_ref(&interners.string).into(),
-                            v.lookup(interners),
-                        )
-                    })
+                    .map(|(k, v)| (interners.string.lookup(k.0).into(), v.lookup(interners)))
                     .collect(),
             ),
         }
@@ -200,13 +199,14 @@ impl IValueImpl {
             IValueImpl::U64(x) => ValueRef::U64(*x),
             IValueImpl::I64(x) => ValueRef::I64(*x),
             IValueImpl::F64(Float64(OrderedFloat(x))) => ValueRef::F64(*x),
-            IValueImpl::String(s) => ValueRef::String(s.lookup_ref(&interners.string)),
-            IValueImpl::Array(a) => ValueRef::Array(a.lookup(&interners.iarray)),
+            IValueImpl::String(s) => ValueRef::String(interners.string.lookup(*s)),
+            IValueImpl::Array(a) => ValueRef::Array(interners.iarray.lookup(*a)),
             IValueImpl::Object(o) => ValueRef::Object(MapRef {
-                map: o
-                    .lookup(&interners.iobject)
+                map: interners
+                    .iobject
+                    .lookup(*o)
                     .iter()
-                    .map(|(k, v)| (k.0.lookup_ref(&interners.string), v))
+                    .map(|(k, v)| (interners.string.lookup(k.0), v))
                     .collect(),
             }),
         }
@@ -430,7 +430,7 @@ mod delta {
                 IValueDelta::String(x) => {
                     let x = self.s.wrapping_add(*x as u32);
                     self.s = x;
-                    IValueImpl::String(Interned::from_id(x))
+                    IValueImpl::String(InternedStr::from_id(x))
                 }
                 IValueDelta::Array(x) => {
                     let x = self.a.wrapping_add(*x as u32);
@@ -497,7 +497,7 @@ mod delta {
                     key = k;
                     let acc = self.map.entry(k).or_default();
                     let x = IValue(acc.unfold(xdiff));
-                    (InternedStrKey(Interned::from_id(k)), x)
+                    (InternedStrKey(InternedStr::from_id(k)), x)
                 })
                 .collect()
         }

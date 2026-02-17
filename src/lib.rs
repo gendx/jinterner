@@ -7,7 +7,7 @@
 mod delta;
 mod detail;
 
-use blazinterner::{Arena, ArenaSlice, Interned, InternedSlice};
+use blazinterner::{ArenaSlice, ArenaStr, InternedSlice, InternedStr};
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
 use detail::InternedStrKey;
@@ -25,7 +25,7 @@ use std::cmp::Ordering;
 #[cfg_attr(feature = "serde", derive(Serialize_tuple, Deserialize_tuple))]
 #[cfg_attr(feature = "get-size2", derive(GetSize))]
 pub struct Jinterners {
-    string: Arena<str, Box<str>>,
+    string: ArenaStr,
     iarray: ArenaSlice<IValue>,
     iobject: ArenaSlice<(InternedStrKey, IValue)>,
 }
@@ -102,10 +102,11 @@ impl Jinterners {
                 None => break,
                 Some((iarray, iobject, mapping_opt)) => match optimized {
                     None => {
-                        let num_strings = self.string.len() as u32;
-                        let mut string = Arena::with_capacity(self.string.len());
+                        let num_strings = self.string.strings() as u32;
+                        let mut string =
+                            ArenaStr::with_capacity(self.string.strings(), self.string.bytes());
                         for i in 0..num_strings {
-                            string.push_mut(Interned::from_id(i).lookup_ref(&self.string).into());
+                            string.push_mut(self.string.lookup(InternedStr::from_id(i)));
                         }
 
                         (
@@ -154,7 +155,7 @@ impl Jinterners {
         }
 
         let mut jinterners = Jinterners {
-            string: Arena::with_capacity(self.string.len()),
+            string: ArenaStr::with_capacity(self.string.strings(), self.string.bytes()),
             iarray: ArenaSlice::with_capacity(self.iarray.slices(), self.iarray.items()),
             iobject: ArenaSlice::with_capacity(self.iobject.slices(), self.iobject.items()),
         };
@@ -162,21 +163,21 @@ impl Jinterners {
         for i in string_rev.iter() {
             jinterners
                 .string
-                .push_mut(Interned::from_id(i).lookup_ref(&self.string).into());
+                .push_mut(self.string.lookup(InternedStr::from_id(i)));
         }
         for i in iarray_rev.iter() {
-            let array = InternedSlice::from_id(i).lookup(&self.iarray);
+            let array = self.iarray.lookup(InternedSlice::from_id(i));
             let array: Box<[_]> = array.iter().map(|ivalue| mapping.map(*ivalue)).collect();
-            jinterners.iarray.push_mut(&array);
+            jinterners.iarray.push_copy_mut(&array);
         }
         for i in iobject_rev.iter() {
-            let object = InternedSlice::from_id(i).lookup(&self.iobject);
+            let object = self.iobject.lookup(InternedSlice::from_id(i));
             let mut object: Box<[_]> = object
                 .iter()
                 .map(|(k, ivalue)| (mapping.map_str_key(*k), mapping.map(*ivalue)))
                 .collect();
             object.sort_unstable_by_key(|(k, _)| *k);
-            jinterners.iobject.push_mut(&object);
+            jinterners.iobject.push_copy_mut(&object);
         }
 
         Some((jinterners, mapping))
@@ -193,7 +194,7 @@ impl Jinterners {
         }
 
         let mut jinterners = Jinterners {
-            string: Arena::with_capacity(self.string.len()),
+            string: ArenaStr::with_capacity(self.string.strings(), self.string.bytes()),
             iarray: ArenaSlice::with_capacity(self.iarray.slices(), self.iarray.items()),
             iobject: ArenaSlice::with_capacity(self.iobject.slices(), self.iobject.items()),
         };
@@ -201,21 +202,21 @@ impl Jinterners {
         for i in string_rev.iter() {
             jinterners
                 .string
-                .push_mut(Interned::from_id(i).lookup_ref(&self.string).into());
+                .push_mut(self.string.lookup(InternedStr::from_id(i)));
         }
         for i in 0..self.iarray.slices() as u32 {
-            let array = InternedSlice::from_id(i).lookup(&self.iarray);
+            let array = self.iarray.lookup(InternedSlice::from_id(i));
             let array: Box<[_]> = array.iter().map(|ivalue| mapping.map(*ivalue)).collect();
-            jinterners.iarray.push_mut(&array);
+            jinterners.iarray.push_copy_mut(&array);
         }
         for i in 0..self.iobject.slices() as u32 {
-            let object = InternedSlice::from_id(i).lookup(&self.iobject);
+            let object = self.iobject.lookup(InternedSlice::from_id(i));
             let mut object: Box<[_]> = object
                 .iter()
                 .map(|(k, ivalue)| (mapping.map_str_key(*k), mapping.map(*ivalue)))
                 .collect();
             object.sort_unstable_by_key(|(k, _)| *k);
-            jinterners.iobject.push_mut(&object);
+            jinterners.iobject.push_copy_mut(&object);
         }
 
         Some((jinterners, mapping))
@@ -242,43 +243,41 @@ impl Jinterners {
 
         let mut iarray = ArenaSlice::with_capacity(self.iarray.slices(), self.iarray.items());
         for i in iarray_rev.iter() {
-            let array = InternedSlice::from_id(i).lookup(&self.iarray);
+            let array = self.iarray.lookup(InternedSlice::from_id(i));
             let array: Box<[_]> = array.iter().map(|ivalue| mapping.map(*ivalue)).collect();
-            iarray.push_mut(&array);
+            iarray.push_copy_mut(&array);
         }
 
         let mut iobject = ArenaSlice::with_capacity(self.iobject.slices(), self.iobject.items());
         for i in iobject_rev.iter() {
-            let object = InternedSlice::from_id(i).lookup(&self.iobject);
+            let object = self.iobject.lookup(InternedSlice::from_id(i));
             let object: Box<[_]> = object
                 .iter()
                 .map(|(k, ivalue)| (*k, mapping.map(*ivalue)))
                 .collect();
-            iobject.push_mut(&object);
+            iobject.push_copy_mut(&object);
         }
 
         Some((iarray, iobject, mapping))
     }
 
     fn optimized_mapping_strings(&self) -> RevMappingImpl {
-        let mut mapping: Vec<u32> = (0..self.string.len() as u32).collect();
-        mapping
-            .sort_by_cached_key(|i| CustomStrOrd(Interned::from_id(*i).lookup_ref(&self.string)));
+        let mut mapping: Vec<u32> = (0..self.string.strings() as u32).collect();
+        mapping.sort_by_cached_key(|i| CustomStrOrd(self.string.lookup(InternedStr::from_id(*i))));
         RevMappingImpl(mapping.into_boxed_slice())
     }
 
     fn optimized_mapping_arrays(&self) -> RevMappingImpl {
         let mut mapping: Vec<u32> = (0..self.iarray.slices() as u32).collect();
-        mapping.sort_by_cached_key(|i| {
-            CustomSliceOrd(InternedSlice::from_id(*i).lookup(&self.iarray))
-        });
+        mapping
+            .sort_by_cached_key(|i| CustomSliceOrd(self.iarray.lookup(InternedSlice::from_id(*i))));
         RevMappingImpl(mapping.into_boxed_slice())
     }
 
     fn optimized_mapping_objects(&self) -> RevMappingImpl {
         let mut mapping: Vec<u32> = (0..self.iobject.slices() as u32).collect();
         mapping.sort_by_cached_key(|i| {
-            CustomSliceOrd(InternedSlice::from_id(*i).lookup(&self.iobject))
+            CustomSliceOrd(self.iobject.lookup(InternedSlice::from_id(*i)))
         });
         RevMappingImpl(mapping.into_boxed_slice())
     }

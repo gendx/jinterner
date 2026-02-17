@@ -1,5 +1,5 @@
-use super::{IValue, IValueImpl, InternedStr, InternedStrKey};
-use blazinterner::{Interned, InternedSlice};
+use super::{IValue, IValueImpl, InternedStrKey};
+use blazinterner::{InternedSlice, InternedStr};
 
 /// Mapping to convert values from one [`Jinterners`](crate::Jinterners)
 /// instance to another.
@@ -45,7 +45,7 @@ impl Mapping {
     }
 
     fn map_str(&self, s: InternedStr) -> InternedStr {
-        Interned::from_id(self.string.at(s.id()))
+        InternedStr::from_id(self.string.at(s.id()))
     }
 
     /// Maps the given value from the source [`Jinterners`](crate::Jinterners)
@@ -57,7 +57,9 @@ impl Mapping {
             IValueImpl::U64(x) => IValueImpl::U64(x),
             IValueImpl::I64(x) => IValueImpl::I64(x),
             IValueImpl::F64(x) => IValueImpl::F64(x),
-            IValueImpl::String(x) => IValueImpl::String(Interned::from_id(self.string.at(x.id()))),
+            IValueImpl::String(x) => {
+                IValueImpl::String(InternedStr::from_id(self.string.at(x.id())))
+            }
             IValueImpl::Array(x) => {
                 IValueImpl::Array(InternedSlice::from_id(self.iarray.at(x.id())))
             }
@@ -93,7 +95,7 @@ impl MappingStrings {
     }
 
     fn map_str(&self, s: InternedStr) -> InternedStr {
-        Interned::from_id(self.string.at(s.id()))
+        InternedStr::from_id(self.string.at(s.id()))
     }
 
     /// Maps the given value from the source [`Jinterners`](crate::Jinterners)
@@ -105,7 +107,9 @@ impl MappingStrings {
             IValueImpl::U64(x) => IValueImpl::U64(x),
             IValueImpl::I64(x) => IValueImpl::I64(x),
             IValueImpl::F64(x) => IValueImpl::F64(x),
-            IValueImpl::String(x) => IValueImpl::String(Interned::from_id(self.string.at(x.id()))),
+            IValueImpl::String(x) => {
+                IValueImpl::String(InternedStr::from_id(self.string.at(x.id())))
+            }
             IValueImpl::Array(x) => IValueImpl::Array(x),
             IValueImpl::Object(x) => IValueImpl::Object(x),
         })
