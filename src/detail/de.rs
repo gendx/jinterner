@@ -115,8 +115,20 @@ impl<'de> ValueDeserializer<'_, 'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            IValueImpl::I64(x) => visitor.visit_i64(*x),
             IValueImpl::U64(x) => visitor.visit_u64(*x),
+            IValueImpl::I64(x) => visitor.visit_i64(*x),
+            _ => Err(self.invalid_type(&visitor)),
+        }
+    }
+
+    fn deserialize_float<V>(self, visitor: V) -> Result<V::Value, JsonError>
+    where
+        V: Visitor<'de>,
+    {
+        match self.value {
+            IValueImpl::U64(x) => visitor.visit_u64(*x),
+            IValueImpl::I64(x) => visitor.visit_i64(*x),
+            IValueImpl::F64(Float64(OrderedFloat(x))) => visitor.visit_f64(*x),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
@@ -225,20 +237,14 @@ impl<'de> Deserializer<'de> for ValueDeserializer<'_, 'de> {
     where
         V: Visitor<'de>,
     {
-        match self.value {
-            IValueImpl::F64(Float64(OrderedFloat(x))) => visitor.visit_f64(*x),
-            _ => Err(self.invalid_type(&visitor)),
-        }
+        self.deserialize_float(visitor)
     }
 
     fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        match self.value {
-            IValueImpl::F64(Float64(OrderedFloat(x))) => visitor.visit_f64(*x),
-            _ => Err(self.invalid_type(&visitor)),
-        }
+        self.deserialize_float(visitor)
     }
 
     fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, Self::Error>
