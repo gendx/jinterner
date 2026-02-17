@@ -38,13 +38,13 @@ pub struct IValue(IValueImpl);
 impl IValue {
     /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
     /// arena.
-    pub fn from(interners: &Jinterners, source: Value) -> Self {
+    pub(crate) fn from(interners: &Jinterners, source: Value) -> Self {
         Self(IValueImpl::from(interners, source))
     }
 
     /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
     /// arena.
-    pub fn from_ref(interners: &Jinterners, source: &Value) -> Self {
+    pub(crate) fn from_ref(interners: &Jinterners, source: &Value) -> Self {
         Self(IValueImpl::from_ref(interners, source))
     }
 
@@ -140,7 +140,7 @@ impl IValueImpl {
             Value::Array(a) => IValueImpl::Array(
                 interners.iarray.intern_copy(
                     &a.into_iter()
-                        .map(|v| IValue::from(interners, v))
+                        .map(|v| interners.intern(v))
                         .collect::<Box<[_]>>(),
                 ),
             ),
@@ -150,7 +150,7 @@ impl IValueImpl {
                     .map(|(k, v)| {
                         (
                             InternedStrKey(interners.string.intern(&k)),
-                            IValue::from(interners, v),
+                            interners.intern(v),
                         )
                     })
                     .collect();
@@ -177,7 +177,7 @@ impl IValueImpl {
             Value::Array(a) => IValueImpl::Array(
                 interners.iarray.intern_copy(
                     &a.iter()
-                        .map(|v| IValue::from_ref(interners, v))
+                        .map(|v| interners.intern_ref(v))
                         .collect::<Box<[_]>>(),
                 ),
             ),
@@ -187,7 +187,7 @@ impl IValueImpl {
                     .map(|(k, v)| {
                         (
                             InternedStrKey(interners.string.intern(k.as_str())),
-                            IValue::from_ref(interners, v),
+                            interners.intern_ref(v),
                         )
                     })
                     .collect();
@@ -670,7 +670,7 @@ mod serde_test {
                 "world": {"Second": [42, -123]},
             }
         });
-        let ivalue = IValue::from(&interners, json);
+        let ivalue = interners.intern(json);
 
         let small_foo: SmallFoo = ivalue
             .to_value(&interners)

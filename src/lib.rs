@@ -16,6 +16,7 @@ use detail::mapping::{MappingNoStrings, MappingStrings, RevMappingImpl};
 pub use detail::{IValue, MapRef, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
+use serde_json::Value;
 #[cfg(feature = "serde")]
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 use std::cmp::Ordering;
@@ -70,6 +71,16 @@ impl Jinterners {
 }
 
 impl Jinterners {
+    /// Interns the given [`serde_json::Value`] into this arena.
+    pub fn intern(&self, source: Value) -> IValue {
+        IValue::from(self, source)
+    }
+
+    /// Interns the given [`serde_json::Value`] into this arena.
+    pub fn intern_ref(&self, source: &Value) -> IValue {
+        IValue::from_ref(self, source)
+    }
+
     /// Returns an optimized version of this [`Jinterners`], or [`None`] if the
     /// iteration `limit` is set to zero.
     ///
