@@ -13,7 +13,7 @@ pub use delta::DeltaEncoding;
 use detail::InternedStrKey;
 pub use detail::mapping::Mapping;
 use detail::mapping::{MappingNoStrings, MappingStrings, RevMappingImpl};
-pub use detail::{IValue, ValueRef};
+pub use detail::{IValue, MapRef, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 #[cfg(feature = "serde")]

@@ -1,7 +1,7 @@
 pub mod mapping;
 
 use super::Jinterners;
-use blazinterner::{InternedSlice, InternedStr};
+use blazinterner::{ArenaStr, InternedSlice, InternedStr};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 use ordered_float::OrderedFloat;
@@ -202,12 +202,8 @@ impl IValueImpl {
             IValueImpl::String(s) => ValueRef::String(interners.string.lookup(*s)),
             IValueImpl::Array(a) => ValueRef::Array(interners.iarray.lookup(*a)),
             IValueImpl::Object(o) => ValueRef::Object(MapRef {
-                map: interners
-                    .iobject
-                    .lookup(*o)
-                    .iter()
-                    .map(|(k, v)| (interners.string.lookup(k.0), v))
-                    .collect(),
+                arena_str: &interners.string,
+                map: interners.iobject.lookup(*o),
             }),
         }
     }
@@ -235,13 +231,16 @@ pub enum ValueRef<'a> {
 
 /// A shallow reference to a JSON map.
 pub struct MapRef<'a> {
-    map: Box<[(&'a str, &'a IValue)]>,
+    arena_str: &'a ArenaStr,
+    map: &'a [(InternedStrKey, IValue)],
 }
 
 impl<'a> MapRef<'a> {
     /// Iterates over the key-value pairs in this JSON map, in arbitrary order.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&'a str, &'a IValue)> {
-        self.map.iter().copied()
+        self.map
+            .iter()
+            .map(|(k, v)| (self.arena_str.lookup(k.0), v))
     }
 }
 
