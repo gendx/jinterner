@@ -1,10 +1,18 @@
+#[cfg(feature = "serde")]
+mod de;
 pub mod mapping;
+#[cfg(feature = "serde")]
+mod ser;
 
 use super::Jinterners;
 use blazinterner::{ArenaStr, InternedSlice, InternedStr};
+#[cfg(feature = "serde")]
+use de::ValueDeserializer;
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 use ordered_float::OrderedFloat;
+#[cfg(feature = "serde")]
+use ser::ValueSerializer;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
@@ -54,6 +62,32 @@ impl IValue {
     /// you only need to query specific object field(s) or array element(s).
     pub fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
         self.0.lookup_ref(interners)
+    }
+
+    /// Convert an arbitrary type into an [`IValue`] using that type's
+    /// [`Serialize`] implementation.
+    #[cfg(feature = "serde")]
+    pub fn from_value<T>(value: T, interners: &Jinterners) -> Result<Self, serde_json::error::Error>
+    where
+        T: Serialize,
+    {
+        value.serialize(ValueSerializer { interners }).map(IValue)
+    }
+
+    /// Convert an [`IValue`] into an arbitrary type using that type's
+    /// [`Deserialize`] implementation.
+    #[cfg(feature = "serde")]
+    pub fn to_value<'de, T>(
+        &self,
+        interners: &'de Jinterners,
+    ) -> Result<T, serde_json::error::Error>
+    where
+        T: Deserialize<'de>,
+    {
+        T::deserialize(ValueDeserializer {
+            value: &self.0,
+            interners,
+        })
     }
 }
 
@@ -500,5 +534,205 @@ mod delta {
                 })
                 .collect()
         }
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod serde_test {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Foo {
+        a: bool,
+        b: i32,
+        c: u64,
+        d: f32,
+        e: Option<f64>,
+        f: String,
+        g: Vec<Bar>,
+        h: HashMap<String, Bar>,
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    enum Bar {
+        First,
+        Second(u32, i64),
+        Third { i: String, j: [u8; 4] },
+    }
+
+    fn make_foo() -> Foo {
+        Foo {
+            a: true,
+            b: -0x12345678,
+            c: 0xfedcba98_76543210,
+            d: std::f32::consts::PI,
+            e: Some(std::f64::consts::E),
+            f: "Hello world".into(),
+            g: vec![
+                Bar::First,
+                Bar::Second(0x87654321, -0x12345678_9abcdef0),
+                Bar::Third {
+                    i: "Hello".into(),
+                    j: [1, 2, 3, 4],
+                },
+            ],
+            h: [
+                ("Hello".to_string(), Bar::First),
+                ("world".to_string(), Bar::Second(42, -123)),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct SmallFoo {
+        a: bool,
+        c: u64,
+        f: String,
+    }
+
+    fn make_small_foo() -> SmallFoo {
+        SmallFoo {
+            a: true,
+            c: 0xfedcba98_76543210,
+            f: "Hello world".into(),
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+    enum SimpleEnum {
+        First,
+        Second,
+        Third,
+    }
+
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+    struct NewString(String);
+
+    #[test]
+    #[allow(clippy::approx_constant)]
+    fn round_trip() {
+        let interners = Jinterners::default();
+
+        let original = make_foo();
+        let ivalue = IValue::from_value(&original, &interners).expect("Failed to intern value");
+
+        let json = ivalue.lookup(&interners);
+        assert_eq!(
+            json,
+            json!({
+                "a": true,
+                "b": -0x12345678,
+                "c": 0xfedcba98_76543210_u64,
+                "d": 3.1415927410125732,
+                "e": 2.718281828459045,
+                "f": "Hello world",
+                "g": [
+                    "First",
+                    {"Second": [0x87654321_u32, -0x12345678_9abcdef0_i64]},
+                    {"Third": {"i": "Hello", "j": [1, 2, 3, 4]}},
+                ],
+                "h": {
+                    "Hello": "First",
+                    "world": {"Second": [42, -123]},
+                }
+            })
+        );
+
+        let foo: Foo = ivalue
+            .to_value(&interners)
+            .expect("Failed to convert to value");
+        assert_eq!(foo, original);
+    }
+
+    #[test]
+    #[allow(clippy::approx_constant)]
+    fn deserialize_smaller() {
+        let interners = Jinterners::default();
+
+        let json = json!({
+            "a": true,
+            "b": -0x12345678,
+            "c": 0xfedcba98_76543210_u64,
+            "d": 3.1415927410125732,
+            "e": 2.718281828459045,
+            "f": "Hello world",
+            "g": [
+                "First",
+                {"Second": [0x87654321_u32, -0x12345678_9abcdef0_i64]},
+                {"Third": {"i": "Hello", "j": [1, 2, 3, 4]}},
+            ],
+            "h": {
+                "Hello": "First",
+                "world": {"Second": [42, -123]},
+            }
+        });
+        let ivalue = IValue::from(&interners, json);
+
+        let small_foo: SmallFoo = ivalue
+            .to_value(&interners)
+            .expect("Failed to convert to value");
+        assert_eq!(small_foo, make_small_foo());
+    }
+
+    #[test]
+    fn round_trip_map_key_enum() {
+        let interners = Jinterners::default();
+
+        let original: HashMap<SimpleEnum, u32> = [
+            (SimpleEnum::First, 1),
+            (SimpleEnum::Second, 2),
+            (SimpleEnum::Third, 3),
+        ]
+        .into_iter()
+        .collect();
+        let ivalue = IValue::from_value(&original, &interners).expect("Failed to intern value");
+
+        let json = ivalue.lookup(&interners);
+        assert_eq!(
+            json,
+            json!({
+                "First": 1,
+                "Second": 2,
+                "Third": 3,
+            })
+        );
+
+        let deser: HashMap<SimpleEnum, u32> = ivalue
+            .to_value(&interners)
+            .expect("Failed to convert to value");
+        assert_eq!(deser, original);
+    }
+
+    #[test]
+    fn round_trip_map_key_newtype() {
+        let interners = Jinterners::default();
+
+        let original: HashMap<NewString, u32> = [
+            (NewString("First".into()), 1),
+            (NewString("Second".into()), 2),
+            (NewString("Third".into()), 3),
+        ]
+        .into_iter()
+        .collect();
+        let ivalue = IValue::from_value(&original, &interners).expect("Failed to intern value");
+
+        let json = ivalue.lookup(&interners);
+        assert_eq!(
+            json,
+            json!({
+                "First": 1,
+                "Second": 2,
+                "Third": 3,
+            })
+        );
+
+        let deser: HashMap<NewString, u32> = ivalue
+            .to_value(&interners)
+            .expect("Failed to convert to value");
+        assert_eq!(deser, original);
     }
 }
