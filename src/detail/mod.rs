@@ -12,7 +12,7 @@ use de::ValueDeserializer;
 use get_size2::GetSize;
 use ordered_float::OrderedFloat;
 #[cfg(feature = "serde")]
-use ser::ValueSerializer;
+use ser::{ValueSerializer, ValueSerializerMut};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
@@ -70,12 +70,35 @@ impl IValue {
 
     /// Convert an arbitrary type into an [`IValue`] using that type's
     /// [`Serialize`] implementation.
+    ///
+    /// See also [`from_value_mut()`](Self::from_value_mut), which is more
+    /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
+    /// it avoids acquiring locks.
     #[cfg(feature = "serde")]
     pub fn from_value<T>(value: T, interners: &Jinterners) -> Result<Self, serde_json::error::Error>
     where
         T: Serialize,
     {
         value.serialize(ValueSerializer { interners }).map(IValue)
+    }
+
+    /// Convert an arbitrary type into an [`IValue`] using that type's
+    /// [`Serialize`] implementation.
+    ///
+    /// Contrary to [`from_value()`](Self::from_value), no locks are held
+    /// internally because this function already takes an exclusive mutable
+    /// reference to the [`Jinterners`] arena.
+    #[cfg(feature = "serde")]
+    pub fn from_value_mut<T>(
+        value: T,
+        interners: &mut Jinterners,
+    ) -> Result<Self, serde_json::error::Error>
+    where
+        T: Serialize,
+    {
+        value
+            .serialize(ValueSerializerMut { interners })
+            .map(IValue)
     }
 
     /// Convert an [`IValue`] into an arbitrary type using that type's
@@ -672,6 +695,43 @@ mod serde_test {
 
     #[test]
     #[allow(clippy::approx_constant)]
+    fn round_trip_mut() {
+        let mut interners = Jinterners::default();
+
+        let original = make_foo();
+        let ivalue =
+            IValue::from_value_mut(&original, &mut interners).expect("Failed to intern value");
+
+        let json = ivalue.lookup(&interners);
+        assert_eq!(
+            json,
+            json!({
+                "a": true,
+                "b": -0x12345678,
+                "c": 0xfedcba98_76543210_u64,
+                "d": 3.1415927410125732,
+                "e": 2.718281828459045,
+                "f": "Hello world",
+                "g": [
+                    "First",
+                    {"Second": [0x87654321_u32, -0x12345678_9abcdef0_i64]},
+                    {"Third": {"i": "Hello", "j": [1, 2, 3, 4]}},
+                ],
+                "h": {
+                    "Hello": "First",
+                    "world": {"Second": [42, -123]},
+                }
+            })
+        );
+
+        let foo: Foo = ivalue
+            .to_value(&interners)
+            .expect("Failed to convert to value");
+        assert_eq!(foo, original);
+    }
+
+    #[test]
+    #[allow(clippy::approx_constant)]
     fn deserialize_smaller() {
         let interners = Jinterners::default();
 
@@ -730,6 +790,36 @@ mod serde_test {
     }
 
     #[test]
+    fn round_trip_mut_map_key_enum() {
+        let mut interners = Jinterners::default();
+
+        let original: HashMap<SimpleEnum, u32> = [
+            (SimpleEnum::First, 1),
+            (SimpleEnum::Second, 2),
+            (SimpleEnum::Third, 3),
+        ]
+        .into_iter()
+        .collect();
+        let ivalue =
+            IValue::from_value_mut(&original, &mut interners).expect("Failed to intern value");
+
+        let json = ivalue.lookup(&interners);
+        assert_eq!(
+            json,
+            json!({
+                "First": 1,
+                "Second": 2,
+                "Third": 3,
+            })
+        );
+
+        let deser: HashMap<SimpleEnum, u32> = ivalue
+            .to_value(&interners)
+            .expect("Failed to convert to value");
+        assert_eq!(deser, original);
+    }
+
+    #[test]
     fn round_trip_map_key_newtype() {
         let interners = Jinterners::default();
 
@@ -741,6 +831,36 @@ mod serde_test {
         .into_iter()
         .collect();
         let ivalue = IValue::from_value(&original, &interners).expect("Failed to intern value");
+
+        let json = ivalue.lookup(&interners);
+        assert_eq!(
+            json,
+            json!({
+                "First": 1,
+                "Second": 2,
+                "Third": 3,
+            })
+        );
+
+        let deser: HashMap<NewString, u32> = ivalue
+            .to_value(&interners)
+            .expect("Failed to convert to value");
+        assert_eq!(deser, original);
+    }
+
+    #[test]
+    fn round_trip_mut_map_key_newtype() {
+        let mut interners = Jinterners::default();
+
+        let original: HashMap<NewString, u32> = [
+            (NewString("First".into()), 1),
+            (NewString("Second".into()), 2),
+            (NewString("Third".into()), 3),
+        ]
+        .into_iter()
+        .collect();
+        let ivalue =
+            IValue::from_value_mut(&original, &mut interners).expect("Failed to intern value");
 
         let json = ivalue.lookup(&interners);
         assert_eq!(
