@@ -197,14 +197,18 @@ impl Jinterners {
             // iterator.
             unsafe { jinterners.iarray.push_iter_mut(iter) };
         }
+
+        let mut buffer = Vec::new();
         for i in iobject_rev.iter() {
             let object = self.iobject.lookup(InternedSlice::from_id(i));
-            let mut object: Box<[_]> = object
-                .iter()
-                .map(|(k, ivalue)| (mapping.map_str_key(*k), mapping.map(*ivalue)))
-                .collect();
-            object.sort_unstable_by_key(|(k, _)| *k);
-            jinterners.iobject.push_copy_mut(&object);
+            buffer.extend(
+                object
+                    .iter()
+                    .map(|(k, ivalue)| (mapping.map_str_key(*k), mapping.map(*ivalue))),
+            );
+            buffer.sort_unstable_by_key(|(k, _)| *k);
+            jinterners.iobject.push_copy_mut(&buffer);
+            buffer.clear();
         }
 
         Some((jinterners, mapping))
@@ -238,14 +242,18 @@ impl Jinterners {
             // iterator.
             unsafe { jinterners.iarray.push_iter_mut(iter) };
         }
+
+        let mut buffer = Vec::new();
         for i in 0..self.iobject.slices() as u32 {
             let object = self.iobject.lookup(InternedSlice::from_id(i));
-            let mut object: Box<[_]> = object
-                .iter()
-                .map(|(k, ivalue)| (mapping.map_str_key(*k), mapping.map(*ivalue)))
-                .collect();
-            object.sort_unstable_by_key(|(k, _)| *k);
-            jinterners.iobject.push_copy_mut(&object);
+            buffer.extend(
+                object
+                    .iter()
+                    .map(|(k, ivalue)| (mapping.map_str_key(*k), mapping.map(*ivalue))),
+            );
+            buffer.sort_unstable_by_key(|(k, _)| *k);
+            jinterners.iobject.push_copy_mut(&buffer);
+            buffer.clear();
         }
 
         Some((jinterners, mapping))
