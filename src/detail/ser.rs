@@ -80,11 +80,13 @@ impl<'a> Serializer for ValueSerializer<'a> {
 
     fn serialize_bytes(self, value: &[u8]) -> Result<Self::Ok, Self::Error> {
         // TODO: Can we do better?
-        let array: Box<[IValue]> = value
+        let iter = value
             .iter()
-            .map(|byte| IValue(IValueImpl::U64(*byte as u64)))
-            .collect();
-        Ok(IValueImpl::Array(self.interners.iarray.intern_copy(&array)))
+            .map(|byte| IValue(IValueImpl::U64(*byte as u64)));
+        // SAFETY: The iterator length is trusted, as it's a simple mapping on a slice
+        // iterator.
+        let index = unsafe { self.interners.iarray.intern_iter(iter) };
+        Ok(IValueImpl::Array(index))
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {

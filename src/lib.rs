@@ -1,6 +1,12 @@
 //! An efficient and concurrent interning library for JSON values.
 
-#![forbid(missing_docs, unsafe_code)]
+#![forbid(
+    missing_docs,
+    unsafe_op_in_unsafe_fn,
+    clippy::missing_safety_doc,
+    clippy::multiple_unsafe_ops_per_block,
+    clippy::undocumented_unsafe_blocks
+)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(feature = "delta")]
@@ -183,10 +189,13 @@ impl Jinterners {
                 .string
                 .push_mut(self.string.lookup(InternedStr::from_id(i)));
         }
+
         for i in iarray_rev.iter() {
             let array = self.iarray.lookup(InternedSlice::from_id(i));
-            let array: Box<[_]> = array.iter().map(|ivalue| mapping.map(*ivalue)).collect();
-            jinterners.iarray.push_copy_mut(&array);
+            let iter = array.iter().map(|ivalue| mapping.map(*ivalue));
+            // SAFETY: The iterator length is trusted, as it's a simple mapping on a slice
+            // iterator.
+            unsafe { jinterners.iarray.push_iter_mut(iter) };
         }
         for i in iobject_rev.iter() {
             let object = self.iobject.lookup(InternedSlice::from_id(i));
@@ -224,8 +233,10 @@ impl Jinterners {
         }
         for i in 0..self.iarray.slices() as u32 {
             let array = self.iarray.lookup(InternedSlice::from_id(i));
-            let array: Box<[_]> = array.iter().map(|ivalue| mapping.map(*ivalue)).collect();
-            jinterners.iarray.push_copy_mut(&array);
+            let iter = array.iter().map(|ivalue| mapping.map(*ivalue));
+            // SAFETY: The iterator length is trusted, as it's a simple mapping on a slice
+            // iterator.
+            unsafe { jinterners.iarray.push_iter_mut(iter) };
         }
         for i in 0..self.iobject.slices() as u32 {
             let object = self.iobject.lookup(InternedSlice::from_id(i));
@@ -262,18 +273,19 @@ impl Jinterners {
         let mut iarray = ArenaSlice::with_capacity(self.iarray.slices(), self.iarray.items());
         for i in iarray_rev.iter() {
             let array = self.iarray.lookup(InternedSlice::from_id(i));
-            let array: Box<[_]> = array.iter().map(|ivalue| mapping.map(*ivalue)).collect();
-            iarray.push_copy_mut(&array);
+            let iter = array.iter().map(|ivalue| mapping.map(*ivalue));
+            // SAFETY: The iterator length is trusted, as it's a simple mapping on a slice
+            // iterator.
+            unsafe { iarray.push_iter_mut(iter) };
         }
 
         let mut iobject = ArenaSlice::with_capacity(self.iobject.slices(), self.iobject.items());
         for i in iobject_rev.iter() {
             let object = self.iobject.lookup(InternedSlice::from_id(i));
-            let object: Box<[_]> = object
-                .iter()
-                .map(|(k, ivalue)| (*k, mapping.map(*ivalue)))
-                .collect();
-            iobject.push_copy_mut(&object);
+            let iter = object.iter().map(|(k, ivalue)| (*k, mapping.map(*ivalue)));
+            // SAFETY: The iterator length is trusted, as it's a simple mapping on a slice
+            // iterator.
+            unsafe { iobject.push_iter_mut(iter) };
         }
 
         Some((iarray, iobject, mapping))
