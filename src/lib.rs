@@ -13,7 +13,7 @@
 mod delta;
 mod detail;
 
-use blazinterner::{ArenaSlice, ArenaStr, InternedSlice, InternedStr};
+use blazinterner::{ArenaSlice, ArenaStr, InternedSlice};
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
 pub use detail::mapping::Mapping;
@@ -125,11 +125,11 @@ impl Jinterners {
                 None => break,
                 Some((iarray, iobject, mapping_opt)) => match optimized {
                     None => {
-                        let num_strings = self.string.strings() as u32;
-                        let mut string =
-                            ArenaStr::with_capacity(self.string.strings(), self.string.bytes());
-                        for i in 0..num_strings {
-                            string.push_mut(self.string.lookup(InternedStr::from_id(i)));
+                        let string_iter = self.string.iter();
+                        let num_strings = string_iter.len();
+                        let mut string = ArenaStr::with_capacity(num_strings, self.string.bytes());
+                        for s in string_iter {
+                            string.push_mut(s);
                         }
 
                         (
@@ -138,7 +138,7 @@ impl Jinterners {
                                 iarray,
                                 iobject,
                             },
-                            mapping_opt.promote(num_strings),
+                            mapping_opt.promote(num_strings as u32),
                         )
                     }
                     Some((mut jinterners, mapping)) => {
@@ -177,16 +177,18 @@ impl Jinterners {
             return None;
         }
 
+        let iobject_map_iter = iobject_map.reverse.iter();
+
         let mut jinterners = Jinterners {
             string: self.string.map(&string_map.reverse),
             iarray: self
                 .iarray
                 .map2(&iarray_map.reverse, |ivalue| mapping.map(*ivalue)),
-            iobject: ArenaSlice::with_capacity(self.iobject.slices(), self.iobject.items()),
+            iobject: ArenaSlice::with_capacity(iobject_map_iter.len(), self.iobject.items()),
         };
 
         let mut buffer = Vec::new();
-        for i in iobject_map.reverse.iter() {
+        for i in iobject_map_iter {
             let object = self.iobject.lookup(InternedSlice::from_id(i));
             buffer.extend(
                 object
@@ -211,14 +213,16 @@ impl Jinterners {
             return None;
         }
 
+        let iarray_iter = self.iarray.iter();
+        let iobject_iter = self.iobject.iter();
+
         let mut jinterners = Jinterners {
             string: self.string.map(&string_map.reverse),
-            iarray: ArenaSlice::with_capacity(self.iarray.slices(), self.iarray.items()),
-            iobject: ArenaSlice::with_capacity(self.iobject.slices(), self.iobject.items()),
+            iarray: ArenaSlice::with_capacity(iarray_iter.len(), self.iarray.items()),
+            iobject: ArenaSlice::with_capacity(iobject_iter.len(), self.iobject.items()),
         };
 
-        for i in 0..self.iarray.slices() as u32 {
-            let array = self.iarray.lookup(InternedSlice::from_id(i));
+        for array in iarray_iter {
             let iter = array.iter().map(|ivalue| mapping.map(*ivalue));
             // SAFETY: The iterator length is trusted, as it's a simple mapping on a slice
             // iterator.
@@ -226,8 +230,7 @@ impl Jinterners {
         }
 
         let mut buffer = Vec::new();
-        for i in 0..self.iobject.slices() as u32 {
-            let object = self.iobject.lookup(InternedSlice::from_id(i));
+        for object in iobject_iter {
             buffer.extend(
                 object
                     .iter()
