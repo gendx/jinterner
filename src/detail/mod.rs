@@ -70,17 +70,13 @@ impl IValue {
 
     /// Retrieves the corresponding [`serde_json::Value`] inside the given
     /// [`Jinterners`] arena.
-    pub fn lookup(&self, interners: &Jinterners) -> Value {
+    pub(crate) fn lookup(&self, interners: &Jinterners) -> Value {
         self.0.lookup(interners)
     }
 
     /// Performs a shallow lookup of this value inside the given [`Jinterners`]
     /// arena.
-    ///
-    /// Contrary to [`lookup()`](Self::lookup), this function doesn't create a
-    /// deep copy of the value, and is therefore likely more efficient if
-    /// you only need to query specific object field(s) or array element(s).
-    pub fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
+    pub(crate) fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
         self.0.lookup_ref(interners)
     }
 
@@ -410,7 +406,7 @@ impl IValueImpl {
                     .iarray
                     .lookup(*a)
                     .iter()
-                    .map(|v| v.lookup(interners))
+                    .map(|v| interners.lookup(v))
                     .collect(),
             ),
             IValueImpl::Object(o) => Value::Object(
@@ -418,7 +414,7 @@ impl IValueImpl {
                     .iobject
                     .lookup(*o)
                     .iter()
-                    .map(|(k, v)| (interners.string.lookup(k.0).into(), v.lookup(interners)))
+                    .map(|(k, v)| (interners.string.lookup(k.0).into(), interners.lookup(v)))
                     .collect(),
             ),
         }

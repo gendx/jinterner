@@ -97,6 +97,31 @@ impl Jinterners {
         IValue::from_ref_mut(self, source)
     }
 
+    /// Retrieves the given interned value from this arena.
+    ///
+    /// The caller is responsible for ensuring that the same arena was used to
+    /// intern this value, otherwise an arbitrary value will be returned or
+    /// a panic will happen.
+    ///
+    /// See also [`lookup_ref()`](Self::lookup_ref) if you only need a shallow
+    /// view.
+    pub fn lookup(&self, value: &IValue) -> Value {
+        value.lookup(self)
+    }
+
+    /// Retrieves the given interned value from this arena.
+    ///
+    /// The caller is responsible for ensuring that the same arena was used to
+    /// intern this value, otherwise an arbitrary value will be returned or
+    /// a panic will happen.
+    ///
+    /// Contrary to [`lookup()`](Self::lookup), this function doesn't create a
+    /// deep copy of the value, and is therefore likely more efficient if
+    /// you only need to query specific object field(s) or array element(s).
+    pub fn lookup_ref(&self, value: &IValue) -> ValueRef<'_> {
+        value.lookup_ref(self)
+    }
+
     /// Retrieves the object key associated to the given string, or [`None`] if
     /// no such key has been interned in this arena.
     ///
@@ -373,7 +398,7 @@ mod test {
         }));
 
         assert_eq!(
-            mary.lookup(&interners),
+            interners.lookup(&mary),
             json!({
                 "name": "Mary",
                 "surname": "Smith",
@@ -392,7 +417,7 @@ mod test {
         let mapped_john = mapping.map(john);
 
         assert_eq!(
-            mapped_john.lookup(&filtered),
+            filtered.lookup(&mapped_john),
             json!({
                 "name": "John",
                 "surname": "Doe",
