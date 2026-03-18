@@ -5,6 +5,10 @@ pub mod mapping;
 mod ser;
 
 use super::Jinterners;
+#[cfg(feature = "retain")]
+use bit_set::BitSet;
+#[cfg(feature = "retain")]
+use blazinterner::ArenaSlice;
 use blazinterner::{ArenaStr, InternedSlice, InternedStr};
 #[cfg(feature = "serde")]
 use de::ValueDeserializer;
@@ -115,6 +119,87 @@ impl IValue {
             value: &self.0,
             interners,
         })
+    }
+
+    #[cfg(feature = "retain")]
+    pub(crate) fn retain_all(
+        values: impl Iterator<Item = IValue>,
+        retained_strings: &mut BitSet,
+        retained_arrays: &mut BitSet,
+        retained_objects: &mut BitSet,
+        arena_arrays: &ArenaSlice<IValue>,
+        arena_objects: &ArenaSlice<(InternedStrKey, IValue)>,
+    ) {
+        let mut queue_arrays = Vec::new();
+        let mut queue_objects = Vec::new();
+
+        for v in values {
+            v.retain(
+                retained_strings,
+                retained_arrays,
+                retained_objects,
+                &mut queue_arrays,
+                &mut queue_objects,
+            );
+        }
+
+        loop {
+            if let Some(a) = queue_arrays.pop() {
+                for v in arena_arrays.lookup(a) {
+                    v.retain(
+                        retained_strings,
+                        retained_arrays,
+                        retained_objects,
+                        &mut queue_arrays,
+                        &mut queue_objects,
+                    );
+                }
+            } else if let Some(o) = queue_objects.pop() {
+                for (k, v) in arena_objects.lookup(o) {
+                    retained_strings.insert(k.0.id() as usize);
+                    v.retain(
+                        retained_strings,
+                        retained_arrays,
+                        retained_objects,
+                        &mut queue_arrays,
+                        &mut queue_objects,
+                    );
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    #[cfg(feature = "retain")]
+    fn retain(
+        &self,
+        retained_strings: &mut BitSet,
+        retained_arrays: &mut BitSet,
+        retained_objects: &mut BitSet,
+        queue_arrays: &mut Vec<InternedSlice<IValue>>,
+        queue_objects: &mut Vec<InternedSlice<(InternedStrKey, IValue)>>,
+    ) {
+        match self.0 {
+            IValueImpl::Null
+            | IValueImpl::Bool(_)
+            | IValueImpl::U64(_)
+            | IValueImpl::I64(_)
+            | IValueImpl::F64(_) => (),
+            IValueImpl::String(s) => {
+                retained_strings.insert(s.id() as usize);
+            }
+            IValueImpl::Array(a) => {
+                if retained_arrays.insert(a.id() as usize) {
+                    queue_arrays.push(a);
+                }
+            }
+            IValueImpl::Object(o) => {
+                if retained_objects.insert(o.id() as usize) {
+                    queue_objects.push(o);
+                }
+            }
+        }
     }
 }
 

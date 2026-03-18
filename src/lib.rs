@@ -13,6 +13,8 @@
 mod delta;
 mod detail;
 
+#[cfg(feature = "retain")]
+use bit_set::BitSet;
 use blazinterner::{ArenaSlice, ArenaStr, InternedSlice};
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
@@ -270,5 +272,126 @@ impl Jinterners {
             (*k, mapping.map(*ivalue))
         });
         Some((iarray, iobject, mapping))
+    }
+
+    /// Returns a [`Jinterners`] containing only the given [`IValue`]s of this
+    /// arena, as well as all values transitively referenced by them.
+    ///
+    /// Returns [`None`] if everything contained in this [`Jinterners`] was
+    /// retained.
+    ///
+    /// [`IValue`]s rooted in this [`Jinterners`] need to be converted using the
+    /// resulting [`Mapping`] to be used in the destination [`Jinterners`].
+    #[cfg(feature = "retain")]
+    pub fn retain(&self, values: impl Iterator<Item = IValue>) -> Option<(Jinterners, Mapping)> {
+        let mut retained_strings = BitSet::with_capacity(self.string.strings());
+        let mut retained_arrays = BitSet::with_capacity(self.iarray.slices());
+        let mut retained_objects = BitSet::with_capacity(self.iobject.slices());
+
+        IValue::retain_all(
+            values,
+            &mut retained_strings,
+            &mut retained_arrays,
+            &mut retained_objects,
+            &self.iarray,
+            &self.iobject,
+        );
+
+        let string_map = self
+            .string
+            .retain(|i| retained_strings.contains(i.id() as usize));
+        let iarray_map = self
+            .iarray
+            .retain(|i| retained_arrays.contains(i.id() as usize));
+        let iobject_map = self
+            .iobject
+            .retain(|i| retained_objects.contains(i.id() as usize));
+
+        let mapping = Mapping {
+            string: string_map.forward,
+            iarray: iarray_map.forward,
+            iobject: iobject_map.forward,
+        };
+        if mapping.is_identity() {
+            return None;
+        }
+
+        let jinterners = Jinterners {
+            string: self.string.map(&string_map.reverse),
+            iarray: self
+                .iarray
+                .map2(&iarray_map.reverse, |ivalue| mapping.map(*ivalue)),
+            iobject: self.iobject.map2(&iobject_map.reverse, |(k, ivalue)| {
+                // Retained keys are still in the same order, so we don't need to re-sort them.
+                (mapping.map_str_key(*k), mapping.map(*ivalue))
+            }),
+        };
+
+        Some((jinterners, mapping))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[cfg(feature = "retain")]
+    use super::*;
+    #[cfg(feature = "retain")]
+    use serde_json::json;
+
+    #[cfg(feature = "retain")]
+    #[test]
+    fn retain() {
+        let interners = Jinterners::default();
+
+        let john = interners.intern(json!({
+            "name": "John",
+            "surname": "Doe",
+            "address": {
+                "number": 42,
+                "street": "Way",
+                "city": "Big City",
+            }
+        }));
+        let mary = interners.intern(json!({
+            "name": "Mary",
+            "surname": "Smith",
+            "address": {
+                "number": 123,
+                "square": "Central Square",
+                "city": "Small Town",
+            }
+        }));
+
+        assert_eq!(
+            mary.lookup(&interners),
+            json!({
+                "name": "Mary",
+                "surname": "Smith",
+                "address": {
+                    "number": 123,
+                    "square": "Central Square",
+                    "city": "Small Town",
+                }
+            })
+        );
+
+        // Retaining everything doesn't change the arena.
+        assert!(interners.retain([john, mary].into_iter()).is_none());
+
+        let (filtered, mapping) = interners.retain([john].into_iter()).unwrap();
+        let mapped_john = mapping.map(john);
+
+        assert_eq!(
+            mapped_john.lookup(&filtered),
+            json!({
+                "name": "John",
+                "surname": "Doe",
+                "address": {
+                    "number": 42,
+                    "street": "Way",
+                    "city": "Big City",
+                }
+            })
+        );
     }
 }
