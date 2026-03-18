@@ -87,6 +87,16 @@ impl Jinterners {
         IValue::from_ref(self, source)
     }
 
+    /// Interns the given [`serde_json::Value`] into this arena.
+    pub fn intern_mut(&mut self, source: Value) -> IValue {
+        IValue::from_mut(self, source)
+    }
+
+    /// Interns the given [`serde_json::Value`] into this arena.
+    pub fn intern_ref_mut(&mut self, source: &Value) -> IValue {
+        IValue::from_ref_mut(self, source)
+    }
+
     /// Retrieves the object key associated to the given string, or [`None`] if
     /// no such key has been interned in this arena.
     ///

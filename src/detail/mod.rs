@@ -56,6 +56,18 @@ impl IValue {
         Self(IValueImpl::from_ref(interners, source))
     }
 
+    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
+    /// arena.
+    pub(crate) fn from_mut(interners: &mut Jinterners, source: Value) -> Self {
+        Self(IValueImpl::from_mut(interners, source))
+    }
+
+    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
+    /// arena.
+    pub(crate) fn from_ref_mut(interners: &mut Jinterners, source: &Value) -> Self {
+        Self(IValueImpl::from_ref_mut(interners, source))
+    }
+
     /// Retrieves the corresponding [`serde_json::Value`] inside the given
     /// [`Jinterners`] arena.
     pub fn lookup(&self, interners: &Jinterners) -> Value {
@@ -305,6 +317,80 @@ impl IValueImpl {
                     .collect();
                 io.sort_unstable_by_key(|(k, _)| *k);
                 IValueImpl::Object(interners.iobject.intern_copy(&io))
+            }
+        }
+    }
+
+    fn from_mut(interners: &mut Jinterners, source: Value) -> Self {
+        match source {
+            Value::Null => IValueImpl::Null,
+            Value::Bool(x) => IValueImpl::Bool(x),
+            Value::Number(x) => {
+                if x.is_u64() {
+                    IValueImpl::U64(x.as_u64().unwrap())
+                } else if x.is_i64() {
+                    IValueImpl::I64(x.as_i64().unwrap())
+                } else {
+                    IValueImpl::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
+                }
+            }
+            Value::String(s) => IValueImpl::String(interners.string.intern_mut(&s)),
+            Value::Array(a) => {
+                let a = a
+                    .into_iter()
+                    .map(|v| interners.intern_mut(v))
+                    .collect::<Box<[_]>>();
+                IValueImpl::Array(interners.iarray.intern_copy_mut(&a))
+            }
+            Value::Object(o) => {
+                let mut io: Box<[_]> = o
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (
+                            InternedStrKey(interners.string.intern_mut(&k)),
+                            interners.intern(v),
+                        )
+                    })
+                    .collect();
+                io.sort_unstable_by_key(|(k, _)| *k);
+                IValueImpl::Object(interners.iobject.intern_copy_mut(&io))
+            }
+        }
+    }
+
+    fn from_ref_mut(interners: &mut Jinterners, source: &Value) -> Self {
+        match source {
+            Value::Null => IValueImpl::Null,
+            Value::Bool(x) => IValueImpl::Bool(*x),
+            Value::Number(x) => {
+                if x.is_u64() {
+                    IValueImpl::U64(x.as_u64().unwrap())
+                } else if x.is_i64() {
+                    IValueImpl::I64(x.as_i64().unwrap())
+                } else {
+                    IValueImpl::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
+                }
+            }
+            Value::String(s) => IValueImpl::String(interners.string.intern_mut(s.as_str())),
+            Value::Array(a) => {
+                let a = a
+                    .iter()
+                    .map(|v| interners.intern_ref_mut(v))
+                    .collect::<Box<[_]>>();
+                IValueImpl::Array(interners.iarray.intern_copy_mut(&a))
+            }
+            Value::Object(o) => {
+                let mut io: Box<[_]> = o
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            InternedStrKey(interners.string.intern_mut(k.as_str())),
+                            interners.intern_ref_mut(v),
+                        )
+                    })
+                    .collect();
+                io.sort_unstable_by_key(|(k, _)| *k);
+                IValueImpl::Object(interners.iobject.intern_copy_mut(&io))
             }
         }
     }
