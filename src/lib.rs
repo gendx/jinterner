@@ -13,9 +13,9 @@
 mod delta;
 mod detail;
 
-#[cfg(feature = "retain")]
-use bit_set::BitSet;
 use blazinterner::{ArenaSlice, ArenaStr, InternedSlice};
+#[cfg(feature = "retain")]
+use blazinterner::{RetainSliceBuilder, RetainStrBuilder};
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
 pub use detail::mapping::Mapping;
@@ -318,29 +318,85 @@ impl Jinterners {
     /// [`IValue`]s rooted in this [`Jinterners`] need to be converted using the
     /// resulting [`Mapping`] to be used in the destination [`Jinterners`].
     #[cfg(feature = "retain")]
-    pub fn retain(&self, values: impl Iterator<Item = IValue>) -> Option<(Jinterners, Mapping)> {
-        let mut retained_strings = BitSet::with_capacity(self.string.strings());
-        let mut retained_arrays = BitSet::with_capacity(self.iarray.slices());
-        let mut retained_objects = BitSet::with_capacity(self.iobject.slices());
+    pub fn retain_values(
+        &self,
+        values: impl Iterator<Item = IValue>,
+    ) -> Option<(Jinterners, Mapping)> {
+        let mut builder = self.retain_builder();
+        for v in values {
+            builder.insert(v);
+        }
+        builder.build()
+    }
 
-        IValue::retain_all(
-            values,
-            &mut retained_strings,
-            &mut retained_arrays,
-            &mut retained_objects,
-            &self.iarray,
-            &self.iobject,
-        );
+    /// Returns a builder allowing to select items to retain, and create a
+    /// [`Jinterners`] arena containing only these.
+    #[cfg(feature = "retain")]
+    pub fn retain_builder(&self) -> RetainBuilder<'_> {
+        RetainBuilder {
+            jinterners: self,
+            strings: self.string.retain_builder(),
+            arrays: self.iarray.retain_builder(),
+            objects: self.iobject.retain_builder(),
+            queue_arrays: Vec::new(),
+            queue_objects: Vec::new(),
+        }
+    }
+}
 
-        let string_map = self
-            .string
-            .retain(|i| retained_strings.contains(i.id() as usize));
-        let iarray_map = self
-            .iarray
-            .retain(|i| retained_arrays.contains(i.id() as usize));
-        let iobject_map = self
-            .iobject
-            .retain(|i| retained_objects.contains(i.id() as usize));
+/// A builder to select items to retain in a [`Jinterners`] arena.
+///
+/// This struct is created by the
+/// [`retain_builder()`](Jinterners::retain_builder) method on [`Jinterners`].
+#[cfg(feature = "retain")]
+pub struct RetainBuilder<'a> {
+    jinterners: &'a Jinterners,
+    strings: RetainStrBuilder,
+    arrays: RetainSliceBuilder<IValue>,
+    objects: RetainSliceBuilder<(InternedStrKey, IValue)>,
+    queue_arrays: Vec<InternedSlice<IValue>>,
+    queue_objects: Vec<InternedSlice<(InternedStrKey, IValue)>>,
+}
+
+#[cfg(feature = "retain")]
+impl RetainBuilder<'_> {
+    /// Marks the given value as retained.
+    ///
+    /// Returns [`true`] if the value is newly inserted and [`false`] if it was
+    /// already inserted before or doesn't need interning (e.g. because it
+    /// contains a simple value like an integer).
+    pub fn insert(&mut self, value: IValue) -> bool {
+        value.retain(self)
+    }
+
+    /// Returns a [`Jinterners`] containing only the retained [`IValue`]s, as
+    /// well as all values transitively referenced by them.
+    ///
+    /// Returns [`None`] if everything contained in the corresponding
+    /// [`Jinterners`] was retained.
+    ///
+    /// [`IValue`]s rooted in the original [`Jinterners`] need to be converted
+    /// using the resulting [`Mapping`] to be used in the destination
+    /// [`Jinterners`].
+    pub fn build(mut self) -> Option<(Jinterners, Mapping)> {
+        loop {
+            if let Some(a) = self.queue_arrays.pop() {
+                for v in self.jinterners.iarray.lookup(a) {
+                    v.retain(&mut self);
+                }
+            } else if let Some(o) = self.queue_objects.pop() {
+                for (k, v) in self.jinterners.iobject.lookup(o) {
+                    self.strings.insert(k.0);
+                    v.retain(&mut self);
+                }
+            } else {
+                break;
+            }
+        }
+
+        let string_map = self.strings.build();
+        let iarray_map = self.arrays.build();
+        let iobject_map = self.objects.build();
 
         let mapping = Mapping {
             string: string_map.forward,
@@ -352,14 +408,18 @@ impl Jinterners {
         }
 
         let jinterners = Jinterners {
-            string: self.string.map(&string_map.reverse),
+            string: self.jinterners.string.map(&string_map.reverse),
             iarray: self
+                .jinterners
                 .iarray
                 .map2(&iarray_map.reverse, |ivalue| mapping.map(*ivalue)),
-            iobject: self.iobject.map2(&iobject_map.reverse, |(k, ivalue)| {
-                // Retained keys are still in the same order, so we don't need to re-sort them.
-                (mapping.map_str_key(*k), mapping.map(*ivalue))
-            }),
+            iobject: self
+                .jinterners
+                .iobject
+                .map2(&iobject_map.reverse, |(k, ivalue)| {
+                    // Retained keys are still in the same order, so we don't need to re-sort them.
+                    (mapping.map_str_key(*k), mapping.map(*ivalue))
+                }),
         };
 
         Some((jinterners, mapping))
@@ -411,9 +471,9 @@ mod test {
         );
 
         // Retaining everything doesn't change the arena.
-        assert!(interners.retain([john, mary].into_iter()).is_none());
+        assert!(interners.retain_values([john, mary].into_iter()).is_none());
 
-        let (filtered, mapping) = interners.retain([john].into_iter()).unwrap();
+        let (filtered, mapping) = interners.retain_values([john].into_iter()).unwrap();
         let mapped_john = mapping.map(john);
 
         assert_eq!(
