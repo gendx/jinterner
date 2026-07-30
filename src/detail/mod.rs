@@ -44,6 +44,99 @@ impl Default for InternedStrKey {
 pub struct IValue(IValueImpl);
 
 impl IValue {
+    /// Interns a null JSON value.
+    pub fn null() -> Self {
+        Self(IValueImpl::Null)
+    }
+
+    /// Interns a boolean JSON value.
+    pub fn bool(b: bool) -> Self {
+        Self(IValueImpl::Bool(b))
+    }
+
+    /// Interns an integer JSON value.
+    pub fn u64(x: u64) -> Self {
+        Self(IValueImpl::U64(x))
+    }
+
+    /// Interns an integer JSON value.
+    pub fn i64(x: i64) -> Self {
+        Self(IValueImpl::I64(x))
+    }
+
+    /// Interns a floating-point JSON value.
+    pub fn f64(x: f64) -> Self {
+        Self(IValueImpl::F64(Float64(OrderedFloat(x))))
+    }
+
+    /// Interns a string JSON value.
+    ///
+    /// See also [`string_mut()`](Self::string_mut), which is more efficient if
+    /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn string(interners: &Jinterners, s: &str) -> Self {
+        Self(IValueImpl::String(interners.string.intern(s)))
+    }
+
+    /// Interns a string JSON value.
+    ///
+    /// Contrary to [`string()`](Self::string), no locks are held internally
+    /// because this function already takes an exclusive mutable reference to
+    /// the [`Jinterners`] arena.
+    pub fn string_mut(interners: &mut Jinterners, s: &str) -> Self {
+        Self(IValueImpl::String(interners.string.intern_mut(s)))
+    }
+
+    /// Interns a JSON array, whose items are already interned.
+    ///
+    /// See also [`array_mut()`](Self::array_mut), which is more efficient if
+    /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn array(interners: &Jinterners, a: &[Self]) -> Self {
+        Self(IValueImpl::Array(interners.iarray.intern_copy(a)))
+    }
+
+    /// Interns a JSON array, whose items are already interned.
+    ///
+    /// Contrary to [`array()`](Self::array), no locks are held internally
+    /// because this function already takes an exclusive mutable reference to
+    /// the [`Jinterners`] arena.
+    pub fn array_mut(interners: &mut Jinterners, a: &[Self]) -> Self {
+        Self(IValueImpl::Array(interners.iarray.intern_copy_mut(a)))
+    }
+
+    /// Interns a JSON object, whose values are already interned.
+    ///
+    /// See also [`object_mut()`](Self::object_mut), which is more efficient if
+    /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn object<'a>(interners: &Jinterners, o: impl Iterator<Item = (&'a str, Self)>) -> Self {
+        let mut io: Box<[_]> = o
+            .map(|(k, v)| (InternedStrKey(interners.string.intern(k)), v))
+            .collect();
+        io.sort_unstable_by_key(|(k, _)| *k);
+        Self(IValueImpl::Object(interners.iobject.intern_copy(&io)))
+    }
+
+    /// Interns a JSON object, whose values are already interned.
+    ///
+    /// Contrary to [`object()`](Self::object), no locks are held internally
+    /// because this function already takes an exclusive mutable reference to
+    /// the [`Jinterners`] arena.
+    pub fn object_mut<'a>(
+        interners: &mut Jinterners,
+        o: impl Iterator<Item = (&'a str, Self)>,
+    ) -> Self {
+        let mut io: Box<[_]> = o
+            .map(|(k, v)| (InternedStrKey(interners.string.intern_mut(k)), v))
+            .collect();
+        io.sort_unstable_by_key(|(k, _)| *k);
+        Self(IValueImpl::Object(interners.iobject.intern_copy_mut(&io)))
+    }
+
     /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
     /// arena.
     #[cfg(feature = "sync")]
