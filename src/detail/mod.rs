@@ -13,8 +13,10 @@ use de::ValueDeserializer;
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 use ordered_float::OrderedFloat;
+#[cfg(all(feature = "sync", feature = "serde"))]
+use ser::ValueSerializer;
 #[cfg(feature = "serde")]
-use ser::{ValueSerializer, ValueSerializerMut};
+use ser::ValueSerializerMut;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
@@ -44,12 +46,14 @@ pub struct IValue(IValueImpl);
 impl IValue {
     /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
     /// arena.
+    #[cfg(feature = "sync")]
     pub(crate) fn from(interners: &Jinterners, source: Value) -> Self {
         Self(IValueImpl::from(interners, source))
     }
 
     /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
     /// arena.
+    #[cfg(feature = "sync")]
     pub(crate) fn from_ref(interners: &Jinterners, source: &Value) -> Self {
         Self(IValueImpl::from_ref(interners, source))
     }
@@ -84,7 +88,7 @@ impl IValue {
     /// See also [`from_value_mut()`](Self::from_value_mut), which is more
     /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
     /// it avoids acquiring locks.
-    #[cfg(feature = "serde")]
+    #[cfg(all(feature = "sync", feature = "serde"))]
     pub fn from_value<T>(value: T, interners: &Jinterners) -> Result<Self, serde_json::error::Error>
     where
         T: Serialize,
@@ -188,6 +192,7 @@ enum IValueImpl {
 }
 
 impl IValueImpl {
+    #[cfg(feature = "sync")]
     fn from(interners: &Jinterners, source: Value) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
@@ -225,6 +230,7 @@ impl IValueImpl {
         }
     }
 
+    #[cfg(feature = "sync")]
     fn from_ref(interners: &Jinterners, source: &Value) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
@@ -289,7 +295,7 @@ impl IValueImpl {
                     .map(|(k, v)| {
                         (
                             InternedStrKey(interners.string.intern_mut(&k)),
-                            interners.intern(v),
+                            interners.intern_mut(v),
                         )
                     })
                     .collect();
@@ -769,6 +775,7 @@ mod serde_test {
     #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
     struct NewString(String);
 
+    #[cfg(feature = "sync")]
     #[test]
     #[allow(clippy::approx_constant)]
     fn round_trip() {
@@ -845,7 +852,7 @@ mod serde_test {
     #[test]
     #[allow(clippy::approx_constant)]
     fn deserialize_smaller() {
-        let interners = Jinterners::default();
+        let mut interners = Jinterners::default();
 
         let json = json!({
             "a": true,
@@ -864,7 +871,7 @@ mod serde_test {
                 "world": {"Second": [42, -123]},
             }
         });
-        let ivalue = interners.intern(json);
+        let ivalue = interners.intern_mut(json);
 
         let small_foo: SmallFoo = ivalue
             .to_value(&interners)
@@ -872,6 +879,7 @@ mod serde_test {
         assert_eq!(small_foo, make_small_foo());
     }
 
+    #[cfg(feature = "sync")]
     #[test]
     fn round_trip_map_key_enum() {
         let interners = Jinterners::default();
@@ -931,6 +939,7 @@ mod serde_test {
         assert_eq!(deser, original);
     }
 
+    #[cfg(feature = "sync")]
     #[test]
     fn round_trip_map_key_newtype() {
         let interners = Jinterners::default();

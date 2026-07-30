@@ -78,21 +78,39 @@ impl Jinterners {
 
 impl Jinterners {
     /// Interns the given [`serde_json::Value`] into this arena.
+    ///
+    /// See also [`intern_mut()`](Self::intern_mut), which is more efficient if
+    /// you hold a mutable reference to this [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    #[cfg(feature = "sync")]
     pub fn intern(&self, source: Value) -> IValue {
         IValue::from(self, source)
     }
 
     /// Interns the given [`serde_json::Value`] into this arena.
+    ///
+    /// See also [`intern_ref_mut()`](Self::intern_ref_mut), which is more
+    /// efficient if you hold a mutable reference to this [`Jinterners`] arena
+    /// as it avoids acquiring locks.
+    #[cfg(feature = "sync")]
     pub fn intern_ref(&self, source: &Value) -> IValue {
         IValue::from_ref(self, source)
     }
 
     /// Interns the given [`serde_json::Value`] into this arena.
+    ///
+    /// Contrary to [`intern()`](Self::intern), no locks are held internally
+    /// because this function already takes an exclusive mutable reference to
+    /// this [`Jinterners`] arena.
     pub fn intern_mut(&mut self, source: Value) -> IValue {
         IValue::from_mut(self, source)
     }
 
     /// Interns the given [`serde_json::Value`] into this arena.
+    ///
+    /// Contrary to [`intern_ref()`](Self::intern_ref), no locks are held
+    /// internally because this function already takes an exclusive mutable
+    /// reference to this [`Jinterners`] arena.
     pub fn intern_ref_mut(&mut self, source: &Value) -> IValue {
         IValue::from_ref_mut(self, source)
     }
@@ -436,9 +454,9 @@ mod test {
     #[cfg(feature = "retain")]
     #[test]
     fn retain() {
-        let interners = Jinterners::default();
+        let mut interners = Jinterners::default();
 
-        let john = interners.intern(json!({
+        let john = interners.intern_mut(json!({
             "name": "John",
             "surname": "Doe",
             "address": {
@@ -447,7 +465,7 @@ mod test {
                 "city": "Big City",
             }
         }));
-        let mary = interners.intern(json!({
+        let mary = interners.intern_mut(json!({
             "name": "Mary",
             "surname": "Smith",
             "address": {

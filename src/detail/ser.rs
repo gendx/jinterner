@@ -8,10 +8,12 @@ use serde::ser::{
 use serde::{Serialize, Serializer};
 use serde_json::error::Error;
 
+#[cfg(feature = "sync")]
 pub(super) struct ValueSerializer<'a> {
     pub interners: &'a Jinterners,
 }
 
+#[cfg(feature = "sync")]
 impl<'a> Serializer for ValueSerializer<'a> {
     type Ok = IValueImpl;
     type Error = Error;
@@ -213,11 +215,13 @@ impl<'a> Serializer for ValueSerializer<'a> {
     }
 }
 
+#[cfg(feature = "sync")]
 pub(super) struct SerializeArray<'a> {
     interners: &'a Jinterners,
     array: Vec<IValue>,
 }
 
+#[cfg(feature = "sync")]
 impl SerializeSeq for SerializeArray<'_> {
     type Ok = IValueImpl;
     type Error = Error;
@@ -239,6 +243,7 @@ impl SerializeSeq for SerializeArray<'_> {
     }
 }
 
+#[cfg(feature = "sync")]
 impl SerializeTuple for SerializeArray<'_> {
     type Ok = IValueImpl;
     type Error = Error;
@@ -255,6 +260,7 @@ impl SerializeTuple for SerializeArray<'_> {
     }
 }
 
+#[cfg(feature = "sync")]
 impl SerializeTupleStruct for SerializeArray<'_> {
     type Ok = IValueImpl;
     type Error = Error;
@@ -271,12 +277,14 @@ impl SerializeTupleStruct for SerializeArray<'_> {
     }
 }
 
+#[cfg(feature = "sync")]
 pub(super) struct SerializeArrayVariant<'a> {
     interners: &'a Jinterners,
     variant: &'static str,
     array: Vec<IValue>,
 }
 
+#[cfg(feature = "sync")]
 impl SerializeTupleVariant for SerializeArrayVariant<'_> {
     type Ok = IValueImpl;
     type Error = Error;
@@ -304,12 +312,14 @@ impl SerializeTupleVariant for SerializeArrayVariant<'_> {
     }
 }
 
+#[cfg(feature = "sync")]
 pub(super) struct SerializeObject<'a> {
     interners: &'a Jinterners,
     object: Vec<(InternedStrKey, IValue)>,
     key: Option<InternedStrKey>,
 }
 
+#[cfg(feature = "sync")]
 impl SerializeMap for SerializeObject<'_> {
     type Ok = IValueImpl;
     type Error = Error;
@@ -361,6 +371,7 @@ impl SerializeMap for SerializeObject<'_> {
     }
 }
 
+#[cfg(feature = "sync")]
 impl SerializeStruct for SerializeObject<'_> {
     type Ok = IValueImpl;
     type Error = Error;
@@ -377,12 +388,14 @@ impl SerializeStruct for SerializeObject<'_> {
     }
 }
 
+#[cfg(feature = "sync")]
 pub(super) struct SerializeObjectVariant<'a> {
     interners: &'a Jinterners,
     variant: &'static str,
     object: Vec<(InternedStrKey, IValue)>,
 }
 
+#[cfg(feature = "sync")]
 impl SerializeStructVariant for SerializeObjectVariant<'_> {
     type Ok = IValueImpl;
     type Error = Error;
@@ -415,10 +428,12 @@ impl SerializeStructVariant for SerializeObjectVariant<'_> {
     }
 }
 
+#[cfg(feature = "sync")]
 struct ObjectKeySerializer<'a> {
     interners: &'a Jinterners,
 }
 
+#[cfg(feature = "sync")]
 impl ObjectKeySerializer<'_> {
     fn error() -> Error {
         Error::custom(
@@ -427,6 +442,7 @@ impl ObjectKeySerializer<'_> {
     }
 }
 
+#[cfg(feature = "sync")]
 impl Serializer for ObjectKeySerializer<'_> {
     type Ok = InternedStrKey;
     type Error = Error;
