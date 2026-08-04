@@ -870,7 +870,7 @@ mod serde_test {
 
     #[cfg(feature = "sync")]
     #[test]
-    #[allow(clippy::approx_constant)]
+    #[expect(clippy::approx_constant)]
     fn round_trip() {
         let interners = Jinterners::default();
 
@@ -906,7 +906,7 @@ mod serde_test {
     }
 
     #[test]
-    #[allow(clippy::approx_constant)]
+    #[expect(clippy::approx_constant)]
     fn round_trip_mut() {
         let mut interners = Jinterners::default();
 
@@ -943,7 +943,7 @@ mod serde_test {
     }
 
     #[test]
-    #[allow(clippy::approx_constant)]
+    #[expect(clippy::approx_constant)]
     fn deserialize_smaller() {
         let mut interners = Jinterners::default();
 
