@@ -1,5 +1,6 @@
 use super::{Float64, IValue, IValueImpl, InternedStrKey};
 use crate::Jinterners;
+use alloc::vec::Vec;
 use ordered_float::OrderedFloat;
 use serde::ser::{
     Error as _, Impossible, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,

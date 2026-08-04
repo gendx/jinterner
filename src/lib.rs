@@ -7,12 +7,16 @@
     clippy::multiple_unsafe_ops_per_block,
     clippy::undocumented_unsafe_blocks
 )]
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+
+extern crate alloc;
 
 #[cfg(feature = "delta")]
 mod delta;
 mod detail;
 
+use alloc::vec::Vec;
 use blazinterner::{ArenaSlice, ArenaStr, InternedSlice};
 #[cfg(feature = "retain")]
 use blazinterner::{RetainSliceBuilder, RetainStrBuilder};
@@ -55,7 +59,7 @@ impl Jinterners {
     }
 }
 
-#[cfg(feature = "debug")]
+#[cfg(all(feature = "debug", feature = "std"))]
 impl Jinterners {
     /// Prints a summary of the storage used by the underlying string arena to
     /// stdout.

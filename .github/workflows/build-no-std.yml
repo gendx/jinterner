@@ -1,0 +1,38 @@
+on: [push, pull_request]
+name: Build (no_std)
+jobs:
+  build_no_std:
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - beta
+          - nightly
+          - 1.91.0  # MSRV
+      fail-fast: false
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: x86_64-unknown-none
+
+      - name: Build (no default features)
+        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features
+
+      - name: Build (debug feature)
+        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=debug
+      - name: Build (delta feature)
+        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=delta
+      - name: Build (get-size2 feature)
+        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=get-size2
+      - name: Build (retain feature)
+        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=retain
+      - name: Build (serde feature)
+        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=serde
+
+      - name: Build (all no-std features)
+        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=debug,delta,get-size2,retain,serde

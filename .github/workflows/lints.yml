@@ -17,7 +17,7 @@ jobs:
       - name: Check Clippy lints (no default features)
         run: cargo clippy --verbose --all --no-default-features
       - name: Check Clippy lints (all features except sync)
-        run: cargo clippy --verbose --all --no-default-features --features=debug,delta,get-size2,retain,serde
+        run: cargo clippy --verbose --all --no-default-features --features=debug,delta,get-size2,retain,serde,std
       - name: Check Clippy lints (all features)
         run: cargo clippy --verbose --all --all-features
 
@@ -31,6 +31,8 @@ jobs:
         run: cargo clippy --verbose --all --no-default-features --features=retain
       - name: Check Clippy lints (serde feature)
         run: cargo clippy --verbose --all --no-default-features --features=serde
+      - name: Check Clippy lints (std feature)
+        run: cargo clippy --verbose --all --no-default-features --features=std
       - name: Check Clippy lints (sync feature)
         run: cargo clippy --verbose --all --no-default-features --features=sync
 
@@ -39,7 +41,7 @@ jobs:
       - name: Check Clippy lints on tests (no default features)
         run: cargo clippy --verbose --all --tests --no-default-features
       - name: Check Clippy lints on tests (all features except sync)
-        run: cargo clippy --verbose --all --tests --no-default-features --features=debug,delta,get-size2,retain,serde
+        run: cargo clippy --verbose --all --tests --no-default-features --features=debug,delta,get-size2,retain,serde,std
       - name: Check Clippy lints on tests (all features)
         run: cargo clippy --verbose --all --tests --all-features
 
@@ -48,6 +50,6 @@ jobs:
       - name: Check Clippy lints on doctests (no default features)
         run: cargo test --verbose --doc --no-default-features
       - name: Check Clippy lints on doctests (all features except sync)
-        run: cargo test --verbose --doc --no-default-features --features=debug,delta,get-size2,retain,serde
+        run: cargo test --verbose --doc --no-default-features --features=debug,delta,get-size2,retain,serde,std
       - name: Check Clippy lints on doctests (all features)
         run: cargo test --verbose --doc --all-features

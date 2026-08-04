@@ -1,5 +1,7 @@
 use super::{Float64, IValue, IValueImpl, InternedStrKey};
 use crate::Jinterners;
+use alloc::format;
+use alloc::string::String;
 use blazinterner::{InternedSlice, InternedStr};
 use ordered_float::OrderedFloat;
 use serde::de::{

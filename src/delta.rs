@@ -1,7 +1,7 @@
+use core::fmt::Debug;
+use core::ops::{Deref, DerefMut};
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
-use std::fmt::Debug;
-use std::ops::{Deref, DerefMut};
 
 /// Wrapper around a [`Jinterners`](crate::Jinterners) that uses delta encoding
 /// to serialize it.
@@ -41,7 +41,7 @@ impl<T> Debug for DeltaEncoding<T>
 where
     T: Debug,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.inner.fmt(f)
     }
 }

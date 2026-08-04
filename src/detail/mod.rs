@@ -7,7 +7,9 @@ mod ser;
 use super::Jinterners;
 #[cfg(feature = "retain")]
 use super::RetainBuilder;
+use alloc::boxed::Box;
 use blazinterner::{ArenaStr, InternedSlice, InternedStr};
+use core::fmt::Debug;
 #[cfg(feature = "serde")]
 use de::ValueDeserializer;
 #[cfg(feature = "get-size2")]
@@ -20,7 +22,6 @@ use ser::ValueSerializerMut;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
-use std::fmt::Debug;
 
 /// An interned key for JSON objects.
 ///
@@ -258,7 +259,7 @@ impl IValue {
 struct Float64(OrderedFloat<f64>);
 
 impl Debug for Float64 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.0.fmt(f)
     }
 }
@@ -539,10 +540,10 @@ mod delta {
     use super::*;
     use crate::DeltaEncoding;
     use blazinterner::{Accumulator, ArenaSlice, DeltaEncoding as RawDeltaEncoding};
+    use hashbrown::HashMap;
     use serde::de::{Error, SeqAccess, Visitor};
     use serde::ser::SerializeTuple;
     use serde::{Deserializer, Serializer};
-    use std::collections::HashMap;
 
     impl Serialize for DeltaEncoding<Jinterners> {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -579,7 +580,7 @@ mod delta {
     impl<'de> Visitor<'de> for DeltaJinternersVisitor {
         type Value = DeltaEncoding<Jinterners>;
 
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
             formatter.write_str("a tuple with 3 elements")
         }
 
@@ -796,8 +797,8 @@ mod delta {
 #[cfg(all(test, feature = "serde"))]
 mod serde_test {
     use super::*;
+    use hashbrown::HashMap;
     use serde_json::json;
-    use std::collections::HashMap;
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct Foo {
@@ -823,8 +824,8 @@ mod serde_test {
             a: true,
             b: -0x12345678,
             c: 0xfedcba98_76543210,
-            d: std::f32::consts::PI,
-            e: Some(std::f64::consts::E),
+            d: core::f32::consts::PI,
+            e: Some(core::f64::consts::E),
             f: "Hello world".into(),
             g: vec![
                 Bar::First,
