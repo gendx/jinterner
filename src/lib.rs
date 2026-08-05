@@ -148,8 +148,24 @@ impl Jinterners {
     /// no such key has been interned in this arena.
     ///
     /// This can be useful in combination with [`MapRef::get_by_key()`].
+    ///
+    /// See also [`find_key_mut()`](Self::find_key_mut), which is more efficient
+    /// if you hold a mutable reference to this [`Jinterners`] arena as it
+    /// avoids acquiring locks.
     pub fn find_key(&self, key: &str) -> Option<InternedStrKey> {
         self.string.find(key).map(InternedStrKey)
+    }
+
+    /// Retrieves the object key associated to the given string, or [`None`] if
+    /// no such key has been interned in this arena.
+    ///
+    /// This can be useful in combination with [`MapRef::get_by_key()`].
+    ///
+    /// Contrary to [`find_key()`](Self::find_key), no locks are held internally
+    /// because this function already takes an exclusive mutable reference
+    /// to this [`Jinterners`] arena.
+    pub fn find_key_mut(&mut self, key: &str) -> Option<InternedStrKey> {
+        self.string.find_mut(key).map(InternedStrKey)
     }
 
     /// Returns an optimized version of this [`Jinterners`], or [`None`] if the
