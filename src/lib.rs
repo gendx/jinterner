@@ -126,8 +126,8 @@ impl Jinterners {
     /// Retrieves the given interned value from this arena.
     ///
     /// The caller is responsible for ensuring that the same arena was used to
-    /// intern this value, otherwise an arbitrary value will be returned or
-    /// a panic will happen.
+    /// intern this value, otherwise an arbitrary value will be returned or a
+    /// panic will happen.
     ///
     /// See also [`lookup_ref()`](Self::lookup_ref) if you only need a shallow
     /// view.
@@ -138,12 +138,12 @@ impl Jinterners {
     /// Retrieves the given interned value from this arena.
     ///
     /// The caller is responsible for ensuring that the same arena was used to
-    /// intern this value, otherwise an arbitrary value will be returned or
-    /// a panic will happen.
+    /// intern this value, otherwise an arbitrary value will be returned or a
+    /// panic will happen.
     ///
     /// Contrary to [`lookup()`](Self::lookup), this function doesn't create a
-    /// deep copy of the value, and is therefore likely more efficient if
-    /// you only need to query specific object field(s) or array element(s).
+    /// deep copy of the value, and is therefore likely more efficient if you
+    /// only need to query specific object field(s) or array element(s).
     pub fn lookup_ref(&self, value: &IValue) -> ValueRef<'_> {
         value.lookup_ref(self)
     }
@@ -171,6 +171,15 @@ impl Jinterners {
     /// reference to this [`Jinterners`] arena.
     pub fn intern_key_mut(&mut self, key: &str) -> InternedStrKey {
         InternedStrKey(self.string.intern_mut(key))
+    }
+
+    /// Retrieves the given interned key from this arena.
+    ///
+    /// The caller is responsible for ensuring that the same arena was used to
+    /// intern this key, otherwise an arbitrary string will be returned or a
+    /// panic will happen.
+    pub fn lookup_key(&self, key: InternedStrKey) -> &str {
+        self.string.lookup(key.0)
     }
 
     /// Retrieves the object key associated to the given string, or [`None`] if

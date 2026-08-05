@@ -763,10 +763,23 @@ impl<'a> MapRef<'a> {
     }
 
     /// Iterates over the key-value pairs in this JSON map, in arbitrary order.
+    ///
+    /// See also [`iter_keys()`](Self::iter_keys) which is more efficient if you
+    /// only need to manipulate [`InternedStrKey`]s as it doesn't resolve them
+    /// to strings.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&'a str, &'a IValue)> {
         self.map
             .iter()
             .map(|(k, v)| (self.arena_str.lookup(k.0), v))
+    }
+
+    /// Iterates over the key-value pairs in this JSON map, in sorted order of
+    /// keys.
+    ///
+    /// Note that keys are sorted using the ordering on the [`InternedStrKey`]
+    /// type, i.e. the corresponding strings are in arbitrary order.
+    pub fn iter_keys(&self) -> impl ExactSizeIterator<Item = (InternedStrKey, &'a IValue)> {
+        self.map.iter().map(|(k, v)| (*k, v))
     }
 }
 
