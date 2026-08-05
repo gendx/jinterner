@@ -2,6 +2,7 @@ use super::{Float64, IValue, IValueImpl, InternedStrKey};
 use crate::Jinterners;
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 use blazinterner::{InternedSlice, InternedStr};
 use ordered_float::OrderedFloat;
 use serde::de::{
@@ -893,5 +894,300 @@ impl<'de> Deserializer<'de> for StringDeserializer<'de> {
         V: Visitor<'de>,
     {
         visitor.visit_unit()
+    }
+}
+
+/// Helper struct to deserialize an [`IValue`] from a [`Deserializer`],
+/// interning intermediate values into the attached [`Jinterners`] arena.
+///
+/// See also [`IValue::from_json_slice_mut()`] and similar methods if you're
+/// directly deserializing JSON data.
+///
+/// ```
+/// # use jinterner::{IValue, InterningDeserializerMut, Jinterners};
+/// let mut interners = Jinterners::default();
+///
+/// let json = r#"{"foo":42,"bar":"Hello world"}"#;
+/// let mut json_de = serde_json::Deserializer::from_str(json);
+/// let de = InterningDeserializerMut::new(&mut json_de, &mut interners);
+/// let value = de.deserialize().unwrap();
+/// // Make sure the whole input was consumed.
+/// json_de.end().unwrap();
+///
+/// let expected_map = [
+///     ("foo", IValue::u64(42)),
+///     ("bar", IValue::string_mut(&mut interners, "Hello world")),
+/// ];
+/// let expected = IValue::object_mut(&mut interners, expected_map.into_iter());
+/// assert_eq!(value, expected);
+/// ```
+pub struct InterningDeserializerMut<'a, D> {
+    interners: &'a mut Jinterners,
+    inner: D,
+}
+
+impl<'a, D> InterningDeserializerMut<'a, D> {
+    /// Binds a deserializer with the given [`Jinterners`] arena.
+    pub fn new(inner: D, interners: &'a mut Jinterners) -> Self {
+        Self { inner, interners }
+    }
+}
+
+impl<'a, 'de, D> InterningDeserializerMut<'a, D>
+where
+    D: Deserializer<'de>,
+{
+    /// Deserialize an [`IValue`].
+    pub fn deserialize(self) -> Result<IValue, D::Error> {
+        InterningDeserializerImplMut::new(self.inner, self.interners)
+            .deserialize()
+            .map(IValue)
+    }
+}
+
+struct InterningDeserializerImplMut<'a, D> {
+    interners: &'a mut Jinterners,
+    inner: D,
+}
+
+impl<'a, D> InterningDeserializerImplMut<'a, D> {
+    fn new(inner: D, interners: &'a mut Jinterners) -> Self {
+        Self { inner, interners }
+    }
+}
+
+impl<'a, 'de, D> InterningDeserializerImplMut<'a, D>
+where
+    D: Deserializer<'de>,
+{
+    fn deserialize(self) -> Result<IValueImpl, D::Error> {
+        self.inner.deserialize_any(InterningVisitorMut {
+            interners: self.interners,
+        })
+    }
+}
+
+struct InterningVisitorMut<'a> {
+    interners: &'a mut Jinterners,
+}
+
+impl<'a, 'de> Visitor<'de> for InterningVisitorMut<'a> {
+    type Value = IValueImpl;
+
+    fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::Bool(v))
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::I64(v))
+    }
+
+    fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        if let Ok(u) = u64::try_from(v) {
+            Ok(IValueImpl::U64(u))
+        } else if let Ok(i) = i64::try_from(v) {
+            Ok(IValueImpl::I64(i))
+        } else {
+            Err(Error::invalid_value(
+                Unexpected::Other(&format!("an integer out of range ({v})")),
+                &self,
+            ))
+        }
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::U64(v))
+    }
+
+    fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        if let Ok(u) = u64::try_from(v) {
+            Ok(IValueImpl::U64(u))
+        } else {
+            Err(Error::invalid_value(
+                Unexpected::Other(&format!("an integer out of range ({v})")),
+                &self,
+            ))
+        }
+    }
+
+    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::F64(Float64(OrderedFloat(v))))
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::String(self.interners.string.intern_mut(v)))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::Null)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        InterningDeserializerImplMut::new(deserializer, self.interners).deserialize()
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::Null)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut a = match seq.size_hint() {
+            None => Vec::new(),
+            Some(len) => Vec::with_capacity(len),
+        };
+
+        while let Some(ivalue) = seq.next_element_seed(InterningDeserializeSeedMut {
+            interners: self.interners,
+        })? {
+            a.push(IValue(ivalue));
+        }
+
+        Ok(IValueImpl::Array(self.interners.iarray.intern_owned_mut(a)))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut o = match map.size_hint() {
+            None => Vec::new(),
+            Some(len) => Vec::with_capacity(len),
+        };
+
+        while let Some(key) = map.next_key_seed(InterningDeserializeKeySeedMut {
+            interners: self.interners,
+        })? {
+            let ivalue = map.next_value_seed(InterningDeserializeSeedMut {
+                interners: self.interners,
+            })?;
+            o.push((key, IValue(ivalue)));
+        }
+
+        o.sort_unstable_by_key(|(k, _)| *k);
+        Ok(IValueImpl::Object(
+            self.interners.iobject.intern_owned_mut(o),
+        ))
+    }
+}
+
+struct InterningDeserializeSeedMut<'a> {
+    interners: &'a mut Jinterners,
+}
+
+impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeSeedMut<'a> {
+    type Value = IValueImpl;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        InterningDeserializerImplMut::new(deserializer, self.interners).deserialize()
+    }
+}
+
+struct InterningDeserializeKeySeedMut<'a> {
+    interners: &'a mut Jinterners,
+}
+
+impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeKeySeedMut<'a> {
+    type Value = InternedStrKey;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        InterningKeyDeserializerMut::new(deserializer, self.interners).deserialize()
+    }
+}
+
+struct InterningKeyDeserializerMut<'a, D> {
+    interners: &'a mut Jinterners,
+    inner: D,
+}
+
+impl<'a, D> InterningKeyDeserializerMut<'a, D> {
+    pub fn new(inner: D, interners: &'a mut Jinterners) -> Self {
+        Self { inner, interners }
+    }
+}
+
+impl<'a, 'de, D> InterningKeyDeserializerMut<'a, D>
+where
+    D: Deserializer<'de>,
+{
+    pub fn deserialize(self) -> Result<InternedStrKey, D::Error> {
+        self.inner.deserialize_str(InterningKeyVisitorMut {
+            interners: self.interners,
+        })
+    }
+}
+
+struct InterningKeyVisitorMut<'a> {
+    interners: &'a mut Jinterners,
+}
+
+impl<'a, 'de> Visitor<'de> for InterningKeyVisitorMut<'a> {
+    type Value = InternedStrKey;
+
+    fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+        formatter.write_str("a string")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(InternedStrKey(self.interners.string.intern_mut(v)))
+    }
+
+    fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        self.visit_str(v)
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        self.visit_str(&v)
     }
 }

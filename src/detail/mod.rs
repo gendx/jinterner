@@ -15,6 +15,8 @@ use alloc::vec::Vec;
 use blazinterner::{ArenaStr, InternedSlice, InternedStr};
 use core::fmt::Debug;
 #[cfg(feature = "serde")]
+pub use de::InterningDeserializerMut;
+#[cfg(feature = "serde")]
 use de::ValueDeserializer;
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
@@ -25,9 +27,11 @@ use ser::ValueSerializer;
 use ser::ValueSerializerMut;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
+use serde_json::Deserializer as SerdeJsonDeserializer;
 use serde_json::{Number, Value};
 #[cfg(all(feature = "serde", feature = "std"))]
-use std::io::Write;
+use std::io::{Read, Write};
 
 /// An [`IValue`] interned value together with a reference to the associated
 /// [`Jinterners`] arena.
@@ -247,6 +251,51 @@ impl IValue {
             value: &self.0,
             interners,
         })
+    }
+
+    /// Convenience function to combine a [`serde_json::Deserializer`] with an
+    /// [`InterningDeserializerMut`] to deserialize an interned value from a
+    /// plain JSON slice, using the provided [`Jinterners`] arena.
+    #[cfg(feature = "serde")]
+    pub fn from_json_slice_mut(
+        json: &[u8],
+        interners: &mut Jinterners,
+    ) -> Result<Self, serde_json::error::Error> {
+        let mut json_de = SerdeJsonDeserializer::from_slice(json);
+        let de = InterningDeserializerMut::new(&mut json_de, interners);
+        let value = de.deserialize()?;
+        json_de.end()?;
+        Ok(value)
+    }
+
+    /// Convenience function to combine a [`serde_json::Deserializer`] with an
+    /// [`InterningDeserializerMut`] to deserialize an interned value from a
+    /// plain JSON string, using the provided [`Jinterners`] arena.
+    #[cfg(feature = "serde")]
+    pub fn from_json_str_mut(
+        json: &str,
+        interners: &mut Jinterners,
+    ) -> Result<Self, serde_json::error::Error> {
+        let mut json_de = SerdeJsonDeserializer::from_str(json);
+        let de = InterningDeserializerMut::new(&mut json_de, interners);
+        let value = de.deserialize()?;
+        json_de.end()?;
+        Ok(value)
+    }
+
+    /// Convenience function to combine a [`serde_json::Deserializer`] with an
+    /// [`InterningDeserializerMut`] to deserialize an interned value from a
+    /// plain JSON reader, using the provided [`Jinterners`] arena.
+    #[cfg(all(feature = "serde", feature = "std"))]
+    pub fn from_json_reader_mut<R: Read>(
+        json: R,
+        interners: &mut Jinterners,
+    ) -> Result<Self, serde_json::error::Error> {
+        let mut json_de = SerdeJsonDeserializer::from_reader(json);
+        let de = InterningDeserializerMut::new(&mut json_de, interners);
+        let value = de.deserialize()?;
+        json_de.end()?;
+        Ok(value)
     }
 
     /// Convenience function to call [`serde_json::to_vec()`] on a
