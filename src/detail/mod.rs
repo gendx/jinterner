@@ -8,6 +8,10 @@ use super::Jinterners;
 #[cfg(feature = "retain")]
 use super::RetainBuilder;
 use alloc::boxed::Box;
+#[cfg(feature = "serde")]
+use alloc::string::String;
+#[cfg(feature = "serde")]
+use alloc::vec::Vec;
 use blazinterner::{ArenaStr, InternedSlice, InternedStr};
 use core::fmt::Debug;
 #[cfg(feature = "serde")]
@@ -22,6 +26,26 @@ use ser::ValueSerializerMut;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
+#[cfg(all(feature = "serde", feature = "std"))]
+use std::io::Write;
+
+/// An [`IValue`] interned value together with a reference to the associated
+/// [`Jinterners`] arena.
+///
+/// This is for example useful to serialize the value as plain JSON data.
+#[cfg(feature = "serde")]
+pub struct BoundValue<'a> {
+    value: &'a IValue,
+    interners: &'a Jinterners,
+}
+
+#[cfg(feature = "serde")]
+impl<'a> BoundValue<'a> {
+    /// Binds the given [`IValue`] with its associated [`Jinterners`] arena.
+    pub fn new(value: &'a IValue, interners: &'a Jinterners) -> Self {
+        Self { value, interners }
+    }
+}
 
 /// An interned key for JSON objects.
 ///
@@ -223,6 +247,68 @@ impl IValue {
             value: &self.0,
             interners,
         })
+    }
+
+    /// Convenience function to call [`serde_json::to_vec()`] on a
+    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    #[cfg(feature = "serde")]
+    pub fn to_json_bytes(
+        &self,
+        interners: &Jinterners,
+    ) -> Result<Vec<u8>, serde_json::error::Error> {
+        serde_json::to_vec(&BoundValue::new(self, interners))
+    }
+
+    /// Convenience function to call [`serde_json::to_vec_pretty()`] on a
+    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    #[cfg(feature = "serde")]
+    pub fn to_json_bytes_pretty(
+        &self,
+        interners: &Jinterners,
+    ) -> Result<Vec<u8>, serde_json::error::Error> {
+        serde_json::to_vec_pretty(&BoundValue::new(self, interners))
+    }
+
+    /// Convenience function to call [`serde_json::to_string()`] on a
+    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    #[cfg(feature = "serde")]
+    pub fn to_json_string(
+        &self,
+        interners: &Jinterners,
+    ) -> Result<String, serde_json::error::Error> {
+        serde_json::to_string(&BoundValue::new(self, interners))
+    }
+
+    /// Convenience function to call [`serde_json::to_string_pretty()`] on a
+    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    #[cfg(feature = "serde")]
+    pub fn to_json_string_pretty(
+        &self,
+        interners: &Jinterners,
+    ) -> Result<String, serde_json::error::Error> {
+        serde_json::to_string_pretty(&BoundValue::new(self, interners))
+    }
+
+    /// Convenience function to call [`serde_json::to_writer()`] on a
+    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    #[cfg(all(feature = "serde", feature = "std"))]
+    pub fn to_json_writer<W: Write>(
+        &self,
+        writer: W,
+        interners: &Jinterners,
+    ) -> Result<(), serde_json::error::Error> {
+        serde_json::to_writer(writer, &BoundValue::new(self, interners))
+    }
+
+    /// Convenience function to call [`serde_json::to_writer_pretty()`] on a
+    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    #[cfg(all(feature = "serde", feature = "std"))]
+    pub fn to_json_writer_pretty<W: Write>(
+        &self,
+        writer: W,
+        interners: &Jinterners,
+    ) -> Result<(), serde_json::error::Error> {
+        serde_json::to_writer_pretty(writer, &BoundValue::new(self, interners))
     }
 
     #[cfg(feature = "retain")]
@@ -1091,5 +1177,20 @@ mod serde_test {
             .to_value(&interners)
             .expect("Failed to convert to value");
         assert_eq!(deser, original);
+    }
+
+    #[test]
+    fn to_json_string() {
+        let mut interners = Jinterners::default();
+
+        let original = make_foo();
+        let ivalue =
+            IValue::from_value_mut(&original, &mut interners).expect("Failed to intern value");
+
+        let json = ivalue.to_json_string(&interners);
+        assert_eq!(
+            json.unwrap(),
+            r#"{"a":true,"b":-305419896,"c":18364758544493064720,"d":3.1415927410125732,"e":2.718281828459045,"f":"Hello world","g":["First",{"Second":[2271560481,-1311768467463790320]},{"Third":{"i":"Hello","j":[1,2,3,4]}}],"h":{"Hello":"First","world":{"Second":[42,-123]}}}"#
+        );
     }
 }

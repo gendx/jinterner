@@ -22,7 +22,7 @@ delta = ["blazinterner/delta", "dep:hashbrown"]
 get-size2 = ["dep:get-size2", "blazinterner/get-size2"]
 retain = ["blazinterner/retain"]
 serde = ["dep:serde", "dep:serde_tuple", "blazinterner/serde", "hashbrown/serde", "ordered-float/serde"]
-std = ["blazinterner/std"]
+std = ["blazinterner/std", "serde_json/std"]
 sync = ["blazinterner/sync"]
 
 [dependencies]

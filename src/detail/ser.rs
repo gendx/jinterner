@@ -1,4 +1,4 @@
-use super::{Float64, IValue, IValueImpl, InternedStrKey};
+use super::{BoundValue, Float64, IValue, IValueImpl, InternedStrKey};
 use crate::Jinterners;
 use alloc::vec::Vec;
 use ordered_float::OrderedFloat;
@@ -1202,5 +1202,38 @@ impl Serializer for ObjectKeySerializerMut<'_> {
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         Err(Self::error())
+    }
+}
+
+impl<'a> Serialize for BoundValue<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match &self.value.0 {
+            IValueImpl::Null => serializer.serialize_unit(),
+            IValueImpl::Bool(x) => serializer.serialize_bool(*x),
+            IValueImpl::U64(x) => serializer.serialize_u64(*x),
+            IValueImpl::I64(x) => serializer.serialize_i64(*x),
+            IValueImpl::F64(Float64(OrderedFloat(x))) => serializer.serialize_f64(*x),
+            IValueImpl::String(s) => serializer.serialize_str(self.interners.string.lookup(*s)),
+            IValueImpl::Array(a) => {
+                let array = self.interners.iarray.lookup(*a);
+                serializer.collect_seq(
+                    array
+                        .iter()
+                        .map(|value| BoundValue::new(value, self.interners)),
+                )
+            }
+            IValueImpl::Object(o) => {
+                let object = self.interners.iobject.lookup(*o);
+                serializer.collect_map(object.iter().map(|(key, value)| {
+                    (
+                        self.interners.string.lookup(key.0),
+                        BoundValue::new(value, self.interners),
+                    )
+                }))
+            }
+        }
     }
 }

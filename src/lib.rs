@@ -22,6 +22,8 @@ use blazinterner::{ArenaSlice, ArenaStr, InternedSlice};
 use blazinterner::{RetainSliceBuilder, RetainStrBuilder};
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
+#[cfg(feature = "serde")]
+pub use detail::BoundValue;
 pub use detail::mapping::Mapping;
 use detail::mapping::{MappingNoStrings, MappingStrings};
 pub use detail::{IValue, InternedStrKey, MapRef, ValueRef};
