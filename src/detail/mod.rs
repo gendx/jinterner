@@ -168,6 +168,35 @@ impl IValue {
         Self(IValueImpl::Object(interners.iobject.intern_copy_mut(&io)))
     }
 
+    /// Interns a JSON object, whose keys and values are already interned.
+    ///
+    /// See also [`object_from_keys_mut()`](Self::object_from_keys_mut), which
+    /// is more efficient if you hold a mutable reference to the [`Jinterners`]
+    /// arena as it avoids acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn object_from_keys(
+        interners: &Jinterners,
+        o: impl Iterator<Item = (InternedStrKey, Self)>,
+    ) -> Self {
+        let mut io: Box<[_]> = o.collect();
+        io.sort_unstable_by_key(|(k, _)| *k);
+        Self(IValueImpl::Object(interners.iobject.intern_copy(&io)))
+    }
+
+    /// Interns a JSON object, whose keys and values are already interned.
+    ///
+    /// Contrary to [`object_from_keys()`](Self::object_from_keys), no locks are
+    /// held internally because this function already takes an exclusive mutable
+    /// reference to the [`Jinterners`] arena.
+    pub fn object_from_keys_mut(
+        interners: &mut Jinterners,
+        o: impl Iterator<Item = (InternedStrKey, Self)>,
+    ) -> Self {
+        let mut io: Box<[_]> = o.collect();
+        io.sort_unstable_by_key(|(k, _)| *k);
+        Self(IValueImpl::Object(interners.iobject.intern_copy_mut(&io)))
+    }
+
     /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
     /// arena.
     #[cfg(feature = "sync")]

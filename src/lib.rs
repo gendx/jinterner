@@ -148,6 +148,31 @@ impl Jinterners {
         value.lookup_ref(self)
     }
 
+    /// Interns the given string as a map key into this arena.
+    ///
+    /// See also [`find_key`](Self::find_key) is you don't need to add the key
+    /// to the arena but just use it to lookup values in JSON maps.
+    ///
+    /// See also [`intern_key_mut()`](Self::intern_key_mut), which is more
+    /// efficient if you hold a mutable reference to this [`Jinterners`]
+    /// arena as it avoids acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn intern_key(&self, key: &str) -> InternedStrKey {
+        InternedStrKey(self.string.intern(key))
+    }
+
+    /// Interns the given string as a map key into this arena.
+    ///
+    /// See also [`find_key_mut`](Self::find_key_mut) is you don't need to add
+    /// the key to the arena but just use it to lookup values in JSON maps.
+    ///
+    /// Contrary to [`intern_key()`](Self::intern_key), no locks are held
+    /// internally because this function already takes an exclusive mutable
+    /// reference to this [`Jinterners`] arena.
+    pub fn intern_key_mut(&mut self, key: &str) -> InternedStrKey {
+        InternedStrKey(self.string.intern_mut(key))
+    }
+
     /// Retrieves the object key associated to the given string, or [`None`] if
     /// no such key has been interned in this arena.
     ///
