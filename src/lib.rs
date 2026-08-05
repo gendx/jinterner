@@ -22,6 +22,8 @@ use blazinterner::{ArenaSlice, ArenaStr, InternedSlice};
 use blazinterner::{RetainSliceBuilder, RetainStrBuilder};
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
+#[cfg(all(feature = "serde", feature = "sync"))]
+pub use detail::InterningDeserializer;
 pub use detail::mapping::Mapping;
 use detail::mapping::{MappingNoStrings, MappingStrings};
 #[cfg(feature = "serde")]

@@ -18,10 +18,12 @@ use core::fmt::Debug;
 pub use de::InterningDeserializerMut;
 #[cfg(feature = "serde")]
 use de::ValueDeserializer;
+#[cfg(all(feature = "serde", feature = "sync"))]
+pub use de::sync::InterningDeserializer;
 #[cfg(feature = "get-size2")]
 use get_size2::GetSize;
 use ordered_float::OrderedFloat;
-#[cfg(all(feature = "sync", feature = "serde"))]
+#[cfg(all(feature = "serde", feature = "sync"))]
 use ser::ValueSerializer;
 #[cfg(feature = "serde")]
 use ser::ValueSerializerMut;
@@ -210,7 +212,7 @@ impl IValue {
     /// See also [`from_value_mut()`](Self::from_value_mut), which is more
     /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
     /// it avoids acquiring locks.
-    #[cfg(all(feature = "sync", feature = "serde"))]
+    #[cfg(all(feature = "serde", feature = "sync"))]
     pub fn from_value<T>(value: T, interners: &Jinterners) -> Result<Self, serde_json::error::Error>
     where
         T: Serialize,
@@ -254,8 +256,69 @@ impl IValue {
     }
 
     /// Convenience function to combine a [`serde_json::Deserializer`] with an
+    /// [`InterningDeserializer`] to deserialize an interned value from a plain
+    /// JSON slice, using the provided [`Jinterners`] arena.
+    ///
+    /// See also [`from_json_slice_mut()`](Self::from_json_slice_mut), which is
+    /// more efficient if you hold a mutable reference to the [`Jinterners`]
+    /// arena as it avoids acquiring locks.
+    #[cfg(all(feature = "serde", feature = "sync"))]
+    pub fn from_json_slice(
+        json: &[u8],
+        interners: &Jinterners,
+    ) -> Result<Self, serde_json::error::Error> {
+        let mut json_de = SerdeJsonDeserializer::from_slice(json);
+        let de = InterningDeserializer::new(&mut json_de, interners);
+        let value = de.deserialize()?;
+        json_de.end()?;
+        Ok(value)
+    }
+
+    /// Convenience function to combine a [`serde_json::Deserializer`] with an
+    /// [`InterningDeserializer`] to deserialize an interned value from a plain
+    /// JSON string, using the provided [`Jinterners`] arena.
+    ///
+    /// See also [`from_json_str_mut()`](Self::from_json_str_mut), which is more
+    /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
+    /// it avoids acquiring locks.
+    #[cfg(all(feature = "serde", feature = "sync"))]
+    pub fn from_json_str(
+        json: &str,
+        interners: &Jinterners,
+    ) -> Result<Self, serde_json::error::Error> {
+        let mut json_de = SerdeJsonDeserializer::from_str(json);
+        let de = InterningDeserializer::new(&mut json_de, interners);
+        let value = de.deserialize()?;
+        json_de.end()?;
+        Ok(value)
+    }
+
+    /// Convenience function to combine a [`serde_json::Deserializer`] with an
+    /// [`InterningDeserializer`] to deserialize an interned value from a plain
+    /// JSON reader, using the provided [`Jinterners`] arena.
+    ///
+    /// See also [`from_json_reader_mut()`](Self::from_json_reader_mut), which
+    /// is more efficient if you hold a mutable reference to the [`Jinterners`]
+    /// arena as it avoids acquiring locks.
+    #[cfg(all(feature = "serde", feature = "std", feature = "sync"))]
+    pub fn from_json_reader<R: Read>(
+        json: R,
+        interners: &Jinterners,
+    ) -> Result<Self, serde_json::error::Error> {
+        let mut json_de = SerdeJsonDeserializer::from_reader(json);
+        let de = InterningDeserializer::new(&mut json_de, interners);
+        let value = de.deserialize()?;
+        json_de.end()?;
+        Ok(value)
+    }
+
+    /// Convenience function to combine a [`serde_json::Deserializer`] with an
     /// [`InterningDeserializerMut`] to deserialize an interned value from a
     /// plain JSON slice, using the provided [`Jinterners`] arena.
+    ///
+    /// Contrary to [`from_json_slice()`](Self::from_json_slice), no locks are
+    /// held internally because this function already takes an exclusive mutable
+    /// reference to the [`Jinterners`] arena.
     #[cfg(feature = "serde")]
     pub fn from_json_slice_mut(
         json: &[u8],
@@ -271,6 +334,10 @@ impl IValue {
     /// Convenience function to combine a [`serde_json::Deserializer`] with an
     /// [`InterningDeserializerMut`] to deserialize an interned value from a
     /// plain JSON string, using the provided [`Jinterners`] arena.
+    ///
+    /// Contrary to [`from_json_str()`](Self::from_json_str), no locks are held
+    /// internally because this function already takes an exclusive mutable
+    /// reference to the [`Jinterners`] arena.
     #[cfg(feature = "serde")]
     pub fn from_json_str_mut(
         json: &str,
@@ -286,6 +353,10 @@ impl IValue {
     /// Convenience function to combine a [`serde_json::Deserializer`] with an
     /// [`InterningDeserializerMut`] to deserialize an interned value from a
     /// plain JSON reader, using the provided [`Jinterners`] arena.
+    ///
+    /// Contrary to [`from_json_reader()`](Self::from_json_reader), no locks are
+    /// held internally because this function already takes an exclusive mutable
+    /// reference to the [`Jinterners`] arena.
     #[cfg(all(feature = "serde", feature = "std"))]
     pub fn from_json_reader_mut<R: Read>(
         json: R,
