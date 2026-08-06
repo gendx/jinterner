@@ -15,6 +15,8 @@ extern crate alloc;
 #[cfg(feature = "delta")]
 mod delta;
 mod detail;
+#[cfg(feature = "serde")]
+mod util;
 
 use alloc::vec::Vec;
 use blazinterner::{ArenaSlice, ArenaStr, InternedSlice};
@@ -34,6 +36,8 @@ use get_size2::GetSize;
 use serde_json::Value;
 #[cfg(feature = "serde")]
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
+#[cfg(feature = "serde")]
+pub use util::BufferPool;
 
 /// An arena to store interned JSON values.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]

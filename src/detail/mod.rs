@@ -4,6 +4,8 @@ pub mod mapping;
 #[cfg(feature = "serde")]
 mod ser;
 
+#[cfg(feature = "serde")]
+use super::BufferPool;
 use super::Jinterners;
 #[cfg(feature = "retain")]
 use super::RetainBuilder;
@@ -246,7 +248,12 @@ impl IValue {
     where
         T: Serialize,
     {
-        value.serialize(ValueSerializer { interners }).map(IValue)
+        value
+            .serialize(ValueSerializer {
+                interners,
+                buffers: &mut BufferPool::default(),
+            })
+            .map(IValue)
     }
 
     /// Convert an arbitrary type into an [`IValue`] using that type's
@@ -264,7 +271,10 @@ impl IValue {
         T: Serialize,
     {
         value
-            .serialize(ValueSerializerMut { interners })
+            .serialize(ValueSerializerMut {
+                interners,
+                buffers: &mut BufferPool::default(),
+            })
             .map(IValue)
     }
 
@@ -297,7 +307,8 @@ impl IValue {
         interners: &Jinterners,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_slice(json);
-        let de = InterningDeserializer::new(&mut json_de, interners);
+        let mut buffers = BufferPool::default();
+        let de = InterningDeserializer::new(&mut json_de, interners, &mut buffers);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -316,7 +327,8 @@ impl IValue {
         interners: &Jinterners,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_str(json);
-        let de = InterningDeserializer::new(&mut json_de, interners);
+        let mut buffers = BufferPool::default();
+        let de = InterningDeserializer::new(&mut json_de, interners, &mut buffers);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -335,7 +347,8 @@ impl IValue {
         interners: &Jinterners,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_reader(json);
-        let de = InterningDeserializer::new(&mut json_de, interners);
+        let mut buffers = BufferPool::default();
+        let de = InterningDeserializer::new(&mut json_de, interners, &mut buffers);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -354,7 +367,8 @@ impl IValue {
         interners: &mut Jinterners,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_slice(json);
-        let de = InterningDeserializerMut::new(&mut json_de, interners);
+        let mut buffers = BufferPool::default();
+        let de = InterningDeserializerMut::new(&mut json_de, interners, &mut buffers);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -373,7 +387,8 @@ impl IValue {
         interners: &mut Jinterners,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_str(json);
-        let de = InterningDeserializerMut::new(&mut json_de, interners);
+        let mut buffers = BufferPool::default();
+        let de = InterningDeserializerMut::new(&mut json_de, interners, &mut buffers);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -392,7 +407,8 @@ impl IValue {
         interners: &mut Jinterners,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_reader(json);
-        let de = InterningDeserializerMut::new(&mut json_de, interners);
+        let mut buffers = BufferPool::default();
+        let de = InterningDeserializerMut::new(&mut json_de, interners, &mut buffers);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)

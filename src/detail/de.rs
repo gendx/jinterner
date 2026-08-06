@@ -1,8 +1,7 @@
 use super::{Float64, IValue, IValueImpl, InternedStrKey};
-use crate::Jinterners;
+use crate::{BufferPool, Jinterners};
 use alloc::format;
 use alloc::string::String;
-use alloc::vec::Vec;
 use blazinterner::{InternedSlice, InternedStr};
 use ordered_float::OrderedFloat;
 use serde::de::{
@@ -908,12 +907,13 @@ impl<'de> Deserializer<'de> for StringDeserializer<'de> {
 /// exclusive mutable reference to the [`Jinterners`] arena.
 ///
 /// ```
-/// # use jinterner::{IValue, InterningDeserializerMut, Jinterners};
+/// # use jinterner::{BufferPool, IValue, InterningDeserializerMut, Jinterners};
 /// let mut interners = Jinterners::default();
 ///
 /// let json = r#"{"foo":42,"bar":"Hello world"}"#;
 /// let mut json_de = serde_json::Deserializer::from_str(json);
-/// let de = InterningDeserializerMut::new(&mut json_de, &mut interners);
+/// let mut buffers = BufferPool::default();
+/// let de = InterningDeserializerMut::new(&mut json_de, &mut interners, &mut buffers);
 /// let value = de.deserialize().unwrap();
 /// // Make sure the whole input was consumed.
 /// json_de.end().unwrap();
@@ -927,13 +927,18 @@ impl<'de> Deserializer<'de> for StringDeserializer<'de> {
 /// ```
 pub struct InterningDeserializerMut<'a, D> {
     interners: &'a mut Jinterners,
+    buffers: &'a mut BufferPool,
     inner: D,
 }
 
 impl<'a, D> InterningDeserializerMut<'a, D> {
     /// Binds a deserializer with the given [`Jinterners`] arena.
-    pub fn new(inner: D, interners: &'a mut Jinterners) -> Self {
-        Self { inner, interners }
+    pub fn new(inner: D, interners: &'a mut Jinterners, buffers: &'a mut BufferPool) -> Self {
+        Self {
+            inner,
+            interners,
+            buffers,
+        }
     }
 }
 
@@ -943,7 +948,7 @@ where
 {
     /// Deserialize an [`IValue`].
     pub fn deserialize(self) -> Result<IValue, D::Error> {
-        InterningDeserializerImplMut::new(self.inner, self.interners)
+        InterningDeserializerImplMut::new(self.inner, self.interners, self.buffers)
             .deserialize()
             .map(IValue)
     }
@@ -951,12 +956,17 @@ where
 
 struct InterningDeserializerImplMut<'a, D> {
     interners: &'a mut Jinterners,
+    buffers: &'a mut BufferPool,
     inner: D,
 }
 
 impl<'a, D> InterningDeserializerImplMut<'a, D> {
-    fn new(inner: D, interners: &'a mut Jinterners) -> Self {
-        Self { inner, interners }
+    fn new(inner: D, interners: &'a mut Jinterners, buffers: &'a mut BufferPool) -> Self {
+        Self {
+            inner,
+            interners,
+            buffers,
+        }
     }
 }
 
@@ -967,12 +977,14 @@ where
     fn deserialize(self) -> Result<IValueImpl, D::Error> {
         self.inner.deserialize_any(InterningVisitorMut {
             interners: self.interners,
+            buffers: self.buffers,
         })
     }
 }
 
 struct InterningVisitorMut<'a> {
     interners: &'a mut Jinterners,
+    buffers: &'a mut BufferPool,
 }
 
 impl<'a, 'de> Visitor<'de> for InterningVisitorMut<'a> {
@@ -1058,7 +1070,7 @@ impl<'a, 'de> Visitor<'de> for InterningVisitorMut<'a> {
     where
         D: Deserializer<'de>,
     {
-        InterningDeserializerImplMut::new(deserializer, self.interners).deserialize()
+        InterningDeserializerImplMut::new(deserializer, self.interners, self.buffers).deserialize()
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E>
@@ -1072,47 +1084,44 @@ impl<'a, 'de> Visitor<'de> for InterningVisitorMut<'a> {
     where
         A: SeqAccess<'de>,
     {
-        let mut a = match seq.size_hint() {
-            None => Vec::new(),
-            Some(len) => Vec::with_capacity(len),
-        };
-
+        let mut a = self.buffers.pop_array(seq.size_hint());
         while let Some(ivalue) = seq.next_element_seed(InterningDeserializeSeedMut {
             interners: self.interners,
+            buffers: self.buffers,
         })? {
             a.push(IValue(ivalue));
         }
 
-        Ok(IValueImpl::Array(self.interners.iarray.intern_owned_mut(a)))
+        let iarray = self.interners.iarray.intern_copy_mut(&a);
+        self.buffers.push_array(a);
+        Ok(IValueImpl::Array(iarray))
     }
 
     fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
     where
         A: MapAccess<'de>,
     {
-        let mut o = match map.size_hint() {
-            None => Vec::new(),
-            Some(len) => Vec::with_capacity(len),
-        };
-
+        let mut o = self.buffers.pop_object(map.size_hint());
         while let Some(key) = map.next_key_seed(InterningDeserializeKeySeedMut {
             interners: self.interners,
         })? {
             let ivalue = map.next_value_seed(InterningDeserializeSeedMut {
                 interners: self.interners,
+                buffers: self.buffers,
             })?;
             o.push((key, IValue(ivalue)));
         }
 
         o.sort_unstable_by_key(|(k, _)| *k);
-        Ok(IValueImpl::Object(
-            self.interners.iobject.intern_owned_mut(o),
-        ))
+        let iobject = self.interners.iobject.intern_copy_mut(&o);
+        self.buffers.push_object(o);
+        Ok(IValueImpl::Object(iobject))
     }
 }
 
 struct InterningDeserializeSeedMut<'a> {
     interners: &'a mut Jinterners,
+    buffers: &'a mut BufferPool,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeSeedMut<'a> {
@@ -1122,7 +1131,7 @@ impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeSeedMut<'a> {
     where
         D: Deserializer<'de>,
     {
-        InterningDeserializerImplMut::new(deserializer, self.interners).deserialize()
+        InterningDeserializerImplMut::new(deserializer, self.interners, self.buffers).deserialize()
     }
 }
 
@@ -1211,12 +1220,13 @@ pub mod sync {
     /// acquiring locks.
     ///
     /// ```
-    /// # use jinterner::{IValue, InterningDeserializer, Jinterners};
+    /// # use jinterner::{BufferPool, IValue, InterningDeserializer, Jinterners};
     /// let interners = Jinterners::default();
     ///
     /// let json = r#"{"foo":42,"bar":"Hello world"}"#;
     /// let mut json_de = serde_json::Deserializer::from_str(json);
-    /// let de = InterningDeserializer::new(&mut json_de, &interners);
+    /// let mut buffers = BufferPool::default();
+    /// let de = InterningDeserializer::new(&mut json_de, &interners, &mut buffers);
     /// let value = de.deserialize().unwrap();
     /// // Make sure the whole input was consumed.
     /// json_de.end().unwrap();
@@ -1233,13 +1243,18 @@ pub mod sync {
     /// ```
     pub struct InterningDeserializer<'a, D> {
         interners: &'a Jinterners,
+        buffers: &'a mut BufferPool,
         inner: D,
     }
 
     impl<'a, D> InterningDeserializer<'a, D> {
         /// Binds a deserializer with the given [`Jinterners`] arena.
-        pub fn new(inner: D, interners: &'a Jinterners) -> Self {
-            Self { inner, interners }
+        pub fn new(inner: D, interners: &'a Jinterners, buffers: &'a mut BufferPool) -> Self {
+            Self {
+                inner,
+                interners,
+                buffers,
+            }
         }
     }
 
@@ -1249,7 +1264,7 @@ pub mod sync {
     {
         /// Deserialize an [`IValue`].
         pub fn deserialize(self) -> Result<IValue, D::Error> {
-            InterningDeserializerImpl::new(self.inner, self.interners)
+            InterningDeserializerImpl::new(self.inner, self.interners, self.buffers)
                 .deserialize()
                 .map(IValue)
         }
@@ -1257,12 +1272,17 @@ pub mod sync {
 
     struct InterningDeserializerImpl<'a, D> {
         interners: &'a Jinterners,
+        buffers: &'a mut BufferPool,
         inner: D,
     }
 
     impl<'a, D> InterningDeserializerImpl<'a, D> {
-        fn new(inner: D, interners: &'a Jinterners) -> Self {
-            Self { inner, interners }
+        fn new(inner: D, interners: &'a Jinterners, buffers: &'a mut BufferPool) -> Self {
+            Self {
+                inner,
+                interners,
+                buffers,
+            }
         }
     }
 
@@ -1273,12 +1293,14 @@ pub mod sync {
         fn deserialize(self) -> Result<IValueImpl, D::Error> {
             self.inner.deserialize_any(InterningVisitor {
                 interners: self.interners,
+                buffers: self.buffers,
             })
         }
     }
 
     struct InterningVisitor<'a> {
         interners: &'a Jinterners,
+        buffers: &'a mut BufferPool,
     }
 
     impl<'a, 'de> Visitor<'de> for InterningVisitor<'a> {
@@ -1364,7 +1386,7 @@ pub mod sync {
         where
             D: Deserializer<'de>,
         {
-            InterningDeserializerImpl::new(deserializer, self.interners).deserialize()
+            InterningDeserializerImpl::new(deserializer, self.interners, self.buffers).deserialize()
         }
 
         fn visit_unit<E>(self) -> Result<Self::Value, E>
@@ -1378,45 +1400,44 @@ pub mod sync {
         where
             A: SeqAccess<'de>,
         {
-            let mut a = match seq.size_hint() {
-                None => Vec::new(),
-                Some(len) => Vec::with_capacity(len),
-            };
-
+            let mut a = self.buffers.pop_array(seq.size_hint());
             while let Some(ivalue) = seq.next_element_seed(InterningDeserializeSeed {
                 interners: self.interners,
+                buffers: self.buffers,
             })? {
                 a.push(IValue(ivalue));
             }
 
-            Ok(IValueImpl::Array(self.interners.iarray.intern_owned(a)))
+            let iarray = self.interners.iarray.intern_copy(&a);
+            self.buffers.push_array(a);
+            Ok(IValueImpl::Array(iarray))
         }
 
         fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
         where
             A: MapAccess<'de>,
         {
-            let mut o = match map.size_hint() {
-                None => Vec::new(),
-                Some(len) => Vec::with_capacity(len),
-            };
-
+            let mut o = self.buffers.pop_object(map.size_hint());
             while let Some(key) = map.next_key_seed(InterningDeserializeKeySeed {
                 interners: self.interners,
             })? {
                 let ivalue = map.next_value_seed(InterningDeserializeSeed {
                     interners: self.interners,
+                    buffers: self.buffers,
                 })?;
                 o.push((key, IValue(ivalue)));
             }
 
             o.sort_unstable_by_key(|(k, _)| *k);
-            Ok(IValueImpl::Object(self.interners.iobject.intern_owned(o)))
+            let iobject = self.interners.iobject.intern_copy(&o);
+            self.buffers.push_object(o);
+            Ok(IValueImpl::Object(iobject))
         }
     }
 
     struct InterningDeserializeSeed<'a> {
         interners: &'a Jinterners,
+        buffers: &'a mut BufferPool,
     }
 
     impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeSeed<'a> {
@@ -1426,7 +1447,7 @@ pub mod sync {
         where
             D: Deserializer<'de>,
         {
-            InterningDeserializerImpl::new(deserializer, self.interners).deserialize()
+            InterningDeserializerImpl::new(deserializer, self.interners, self.buffers).deserialize()
         }
     }
 

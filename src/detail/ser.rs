@@ -1,5 +1,5 @@
 use super::{BoundValue, Float64, IValue, IValueImpl, InternedStrKey};
-use crate::Jinterners;
+use crate::{BufferPool, Jinterners};
 use alloc::vec::Vec;
 use ordered_float::OrderedFloat;
 use serde::ser::{
@@ -12,6 +12,7 @@ use serde_json::error::Error;
 #[cfg(feature = "sync")]
 pub(super) struct ValueSerializer<'a> {
     pub interners: &'a Jinterners,
+    pub buffers: &'a mut BufferPool,
 }
 
 #[cfg(feature = "sync")]
@@ -145,6 +146,7 @@ impl<'a> Serializer for ValueSerializer<'a> {
             InternedStrKey(self.interners.string.intern(variant)),
             IValue(value.serialize(ValueSerializer {
                 interners: self.interners,
+                buffers: self.buffers,
             })?),
         )];
         Ok(IValueImpl::Object(
@@ -153,9 +155,11 @@ impl<'a> Serializer for ValueSerializer<'a> {
     }
 
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
+        let array = self.buffers.pop_array(len);
         Ok(SerializeArray {
             interners: self.interners,
-            array: Vec::with_capacity(len.unwrap_or(0)),
+            buffers: self.buffers,
+            array,
         })
     }
 
@@ -178,17 +182,21 @@ impl<'a> Serializer for ValueSerializer<'a> {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
+        let array = self.buffers.pop_array_with_capacity(len);
         Ok(SerializeArrayVariant {
             interners: self.interners,
+            buffers: self.buffers,
             variant,
-            array: Vec::with_capacity(len),
+            array,
         })
     }
 
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        let object = self.buffers.pop_object(len);
         Ok(SerializeObject {
             interners: self.interners,
-            object: Vec::with_capacity(len.unwrap_or(0)),
+            buffers: self.buffers,
+            object,
             key: None,
         })
     }
@@ -208,10 +216,12 @@ impl<'a> Serializer for ValueSerializer<'a> {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
+        let object = self.buffers.pop_object_with_capacity(len);
         Ok(SerializeObjectVariant {
             interners: self.interners,
+            buffers: self.buffers,
             variant,
-            object: Vec::with_capacity(len),
+            object,
         })
     }
 }
@@ -219,6 +229,7 @@ impl<'a> Serializer for ValueSerializer<'a> {
 #[cfg(feature = "sync")]
 pub(super) struct SerializeArray<'a> {
     interners: &'a Jinterners,
+    buffers: &'a mut BufferPool,
     array: Vec<IValue>,
 }
 
@@ -233,14 +244,15 @@ impl SerializeSeq for SerializeArray<'_> {
     {
         self.array.push(IValue(value.serialize(ValueSerializer {
             interners: self.interners,
+            buffers: self.buffers,
         })?));
         Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::Array(
-            self.interners.iarray.intern_copy(&self.array),
-        ))
+        let iarray = self.interners.iarray.intern_copy(&self.array);
+        self.buffers.push_array(self.array);
+        Ok(IValueImpl::Array(iarray))
     }
 }
 
@@ -281,6 +293,7 @@ impl SerializeTupleStruct for SerializeArray<'_> {
 #[cfg(feature = "sync")]
 pub(super) struct SerializeArrayVariant<'a> {
     interners: &'a Jinterners,
+    buffers: &'a mut BufferPool,
     variant: &'static str,
     array: Vec<IValue>,
 }
@@ -296,6 +309,7 @@ impl SerializeTupleVariant for SerializeArrayVariant<'_> {
     {
         self.array.push(IValue(value.serialize(ValueSerializer {
             interners: self.interners,
+            buffers: self.buffers,
         })?));
         Ok(())
     }
@@ -305,6 +319,7 @@ impl SerializeTupleVariant for SerializeArrayVariant<'_> {
         let value = IValue(IValueImpl::Array(
             self.interners.iarray.intern_copy(&self.array),
         ));
+        self.buffers.push_array(self.array);
 
         let object = [(key, value)];
         Ok(IValueImpl::Object(
@@ -316,6 +331,7 @@ impl SerializeTupleVariant for SerializeArrayVariant<'_> {
 #[cfg(feature = "sync")]
 pub(super) struct SerializeObject<'a> {
     interners: &'a Jinterners,
+    buffers: &'a mut BufferPool,
     object: Vec<(InternedStrKey, IValue)>,
     key: Option<InternedStrKey>,
 }
@@ -354,6 +370,7 @@ impl SerializeMap for SerializeObject<'_> {
             key,
             IValue(value.serialize(ValueSerializer {
                 interners: self.interners,
+                buffers: self.buffers,
             })?),
         ));
         Ok(())
@@ -366,9 +383,9 @@ impl SerializeMap for SerializeObject<'_> {
             panic!("missing serialize_value call after serialize_key");
         }
         self.object.sort_unstable_by_key(|(k, _)| *k);
-        Ok(IValueImpl::Object(
-            self.interners.iobject.intern_copy(&self.object),
-        ))
+        let iobject = self.interners.iobject.intern_copy(&self.object);
+        self.buffers.push_object(self.object);
+        Ok(IValueImpl::Object(iobject))
     }
 }
 
@@ -392,6 +409,7 @@ impl SerializeStruct for SerializeObject<'_> {
 #[cfg(feature = "sync")]
 pub(super) struct SerializeObjectVariant<'a> {
     interners: &'a Jinterners,
+    buffers: &'a mut BufferPool,
     variant: &'static str,
     object: Vec<(InternedStrKey, IValue)>,
 }
@@ -409,6 +427,7 @@ impl SerializeStructVariant for SerializeObjectVariant<'_> {
             InternedStrKey(self.interners.string.intern(key)),
             IValue(value.serialize(ValueSerializer {
                 interners: self.interners,
+                buffers: self.buffers,
             })?),
         ));
         Ok(())
@@ -421,6 +440,7 @@ impl SerializeStructVariant for SerializeObjectVariant<'_> {
         let value = IValue(IValueImpl::Object(
             self.interners.iobject.intern_copy(&self.object),
         ));
+        self.buffers.push_object(self.object);
 
         let object = [(key, value)];
         Ok(IValueImpl::Object(
@@ -617,6 +637,7 @@ impl Serializer for ObjectKeySerializer<'_> {
 
 pub(super) struct ValueSerializerMut<'a> {
     pub interners: &'a mut Jinterners,
+    pub buffers: &'a mut BufferPool,
 }
 
 impl<'a> Serializer for ValueSerializerMut<'a> {
@@ -749,6 +770,7 @@ impl<'a> Serializer for ValueSerializerMut<'a> {
             InternedStrKey(self.interners.string.intern_mut(variant)),
             IValue(value.serialize(ValueSerializerMut {
                 interners: self.interners,
+                buffers: self.buffers,
             })?),
         )];
         Ok(IValueImpl::Object(
@@ -757,9 +779,11 @@ impl<'a> Serializer for ValueSerializerMut<'a> {
     }
 
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
+        let array = self.buffers.pop_array(len);
         Ok(SerializeArrayMut {
             interners: self.interners,
-            array: Vec::with_capacity(len.unwrap_or(0)),
+            buffers: self.buffers,
+            array,
         })
     }
 
@@ -782,17 +806,21 @@ impl<'a> Serializer for ValueSerializerMut<'a> {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
+        let array = self.buffers.pop_array_with_capacity(len);
         Ok(SerializeArrayVariantMut {
             interners: self.interners,
+            buffers: self.buffers,
             variant,
-            array: Vec::with_capacity(len),
+            array,
         })
     }
 
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        let object = self.buffers.pop_object(len);
         Ok(SerializeObjectMut {
             interners: self.interners,
-            object: Vec::with_capacity(len.unwrap_or(0)),
+            buffers: self.buffers,
+            object,
             key: None,
         })
     }
@@ -812,16 +840,19 @@ impl<'a> Serializer for ValueSerializerMut<'a> {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
+        let object = self.buffers.pop_object_with_capacity(len);
         Ok(SerializeObjectVariantMut {
             interners: self.interners,
+            buffers: self.buffers,
             variant,
-            object: Vec::with_capacity(len),
+            object,
         })
     }
 }
 
 pub(super) struct SerializeArrayMut<'a> {
     interners: &'a mut Jinterners,
+    buffers: &'a mut BufferPool,
     array: Vec<IValue>,
 }
 
@@ -835,14 +866,15 @@ impl SerializeSeq for SerializeArrayMut<'_> {
     {
         self.array.push(IValue(value.serialize(ValueSerializerMut {
             interners: self.interners,
+            buffers: self.buffers,
         })?));
         Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::Array(
-            self.interners.iarray.intern_copy_mut(&self.array),
-        ))
+        let iarray = self.interners.iarray.intern_copy_mut(&self.array);
+        self.buffers.push_array(self.array);
+        Ok(IValueImpl::Array(iarray))
     }
 }
 
@@ -880,6 +912,7 @@ impl SerializeTupleStruct for SerializeArrayMut<'_> {
 
 pub(super) struct SerializeArrayVariantMut<'a> {
     interners: &'a mut Jinterners,
+    buffers: &'a mut BufferPool,
     variant: &'static str,
     array: Vec<IValue>,
 }
@@ -894,6 +927,7 @@ impl SerializeTupleVariant for SerializeArrayVariantMut<'_> {
     {
         self.array.push(IValue(value.serialize(ValueSerializerMut {
             interners: self.interners,
+            buffers: self.buffers,
         })?));
         Ok(())
     }
@@ -903,6 +937,7 @@ impl SerializeTupleVariant for SerializeArrayVariantMut<'_> {
         let value = IValue(IValueImpl::Array(
             self.interners.iarray.intern_copy_mut(&self.array),
         ));
+        self.buffers.push_array(self.array);
 
         let object = [(key, value)];
         Ok(IValueImpl::Object(
@@ -913,6 +948,7 @@ impl SerializeTupleVariant for SerializeArrayVariantMut<'_> {
 
 pub(super) struct SerializeObjectMut<'a> {
     interners: &'a mut Jinterners,
+    buffers: &'a mut BufferPool,
     object: Vec<(InternedStrKey, IValue)>,
     key: Option<InternedStrKey>,
 }
@@ -950,6 +986,7 @@ impl SerializeMap for SerializeObjectMut<'_> {
             key,
             IValue(value.serialize(ValueSerializerMut {
                 interners: self.interners,
+                buffers: self.buffers,
             })?),
         ));
         Ok(())
@@ -962,9 +999,9 @@ impl SerializeMap for SerializeObjectMut<'_> {
             panic!("missing serialize_value call after serialize_key");
         }
         self.object.sort_unstable_by_key(|(k, _)| *k);
-        Ok(IValueImpl::Object(
-            self.interners.iobject.intern_copy_mut(&self.object),
-        ))
+        let iobject = self.interners.iobject.intern_copy_mut(&self.object);
+        self.buffers.push_object(self.object);
+        Ok(IValueImpl::Object(iobject))
     }
 }
 
@@ -986,6 +1023,7 @@ impl SerializeStruct for SerializeObjectMut<'_> {
 
 pub(super) struct SerializeObjectVariantMut<'a> {
     interners: &'a mut Jinterners,
+    buffers: &'a mut BufferPool,
     variant: &'static str,
     object: Vec<(InternedStrKey, IValue)>,
 }
@@ -1002,6 +1040,7 @@ impl SerializeStructVariant for SerializeObjectVariantMut<'_> {
             InternedStrKey(self.interners.string.intern_mut(key)),
             IValue(value.serialize(ValueSerializerMut {
                 interners: self.interners,
+                buffers: self.buffers,
             })?),
         ));
         Ok(())
@@ -1014,6 +1053,7 @@ impl SerializeStructVariant for SerializeObjectVariantMut<'_> {
         let value = IValue(IValueImpl::Object(
             self.interners.iobject.intern_copy_mut(&self.object),
         ));
+        self.buffers.push_object(self.object);
 
         let object = [(key, value)];
         Ok(IValueImpl::Object(
