@@ -1,6 +1,5 @@
 use super::{BoundValue, Float64, IValue, IValueImpl, InternedStrKey};
-use crate::{BufferPool, Jinterners};
-use alloc::vec::Vec;
+use crate::{Buffer, BufferPool, Jinterners};
 use ordered_float::OrderedFloat;
 use serde::ser::{
     Error as _, Impossible, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
@@ -230,7 +229,7 @@ impl<'a> Serializer for ValueSerializer<'a> {
 pub(super) struct SerializeArray<'a> {
     interners: &'a Jinterners,
     buffers: &'a mut BufferPool,
-    array: Vec<IValue>,
+    array: Buffer<IValue>,
 }
 
 #[cfg(feature = "sync")]
@@ -295,7 +294,7 @@ pub(super) struct SerializeArrayVariant<'a> {
     interners: &'a Jinterners,
     buffers: &'a mut BufferPool,
     variant: &'static str,
-    array: Vec<IValue>,
+    array: Buffer<IValue>,
 }
 
 #[cfg(feature = "sync")]
@@ -332,7 +331,7 @@ impl SerializeTupleVariant for SerializeArrayVariant<'_> {
 pub(super) struct SerializeObject<'a> {
     interners: &'a Jinterners,
     buffers: &'a mut BufferPool,
-    object: Vec<(InternedStrKey, IValue)>,
+    object: Buffer<(InternedStrKey, IValue)>,
     key: Option<InternedStrKey>,
 }
 
@@ -411,7 +410,7 @@ pub(super) struct SerializeObjectVariant<'a> {
     interners: &'a Jinterners,
     buffers: &'a mut BufferPool,
     variant: &'static str,
-    object: Vec<(InternedStrKey, IValue)>,
+    object: Buffer<(InternedStrKey, IValue)>,
 }
 
 #[cfg(feature = "sync")]
@@ -853,7 +852,7 @@ impl<'a> Serializer for ValueSerializerMut<'a> {
 pub(super) struct SerializeArrayMut<'a> {
     interners: &'a mut Jinterners,
     buffers: &'a mut BufferPool,
-    array: Vec<IValue>,
+    array: Buffer<IValue>,
 }
 
 impl SerializeSeq for SerializeArrayMut<'_> {
@@ -914,7 +913,7 @@ pub(super) struct SerializeArrayVariantMut<'a> {
     interners: &'a mut Jinterners,
     buffers: &'a mut BufferPool,
     variant: &'static str,
-    array: Vec<IValue>,
+    array: Buffer<IValue>,
 }
 
 impl SerializeTupleVariant for SerializeArrayVariantMut<'_> {
@@ -949,7 +948,7 @@ impl SerializeTupleVariant for SerializeArrayVariantMut<'_> {
 pub(super) struct SerializeObjectMut<'a> {
     interners: &'a mut Jinterners,
     buffers: &'a mut BufferPool,
-    object: Vec<(InternedStrKey, IValue)>,
+    object: Buffer<(InternedStrKey, IValue)>,
     key: Option<InternedStrKey>,
 }
 
@@ -1025,7 +1024,7 @@ pub(super) struct SerializeObjectVariantMut<'a> {
     interners: &'a mut Jinterners,
     buffers: &'a mut BufferPool,
     variant: &'static str,
-    object: Vec<(InternedStrKey, IValue)>,
+    object: Buffer<(InternedStrKey, IValue)>,
 }
 
 impl SerializeStructVariant for SerializeObjectVariantMut<'_> {

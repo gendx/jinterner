@@ -37,6 +37,8 @@ use serde_json::Value;
 #[cfg(feature = "serde")]
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 #[cfg(feature = "serde")]
+use util::Buffer;
+#[cfg(feature = "serde")]
 pub use util::BufferPool;
 
 /// An arena to store interned JSON values.
