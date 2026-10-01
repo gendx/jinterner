@@ -517,8 +517,8 @@ impl Debug for Float64 {
 
 #[cfg(feature = "get-size2")]
 impl GetSize for Float64 {
-    // There is nothing on the heap, so the default implementation works out of the
-    // box.
+    // There is nothing on the heap, so the default implementation works out of
+    // the box.
 }
 
 #[derive(Default, Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]

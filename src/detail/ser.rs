@@ -86,8 +86,8 @@ impl<'a> Serializer for ValueSerializer<'a> {
         let iter = value
             .iter()
             .map(|byte| IValue(IValueImpl::U64(*byte as u64)));
-        // SAFETY: The iterator length is trusted, as it's a simple mapping on a slice
-        // iterator.
+        // SAFETY: The iterator length is trusted, as it's a simple mapping on a
+        // slice iterator.
         let index = unsafe { self.interners.iarray.intern_iter(iter) };
         Ok(IValueImpl::Array(index))
     }
@@ -344,8 +344,8 @@ impl SerializeMap for SerializeObject<'_> {
     where
         T: ?Sized + Serialize,
     {
-        // Panic because this indicates a bug in the program rather than an expected
-        // failure.
+        // Panic because this indicates a bug in the program rather than an
+        // expected failure.
         if self.key.is_some() {
             panic!("serialize_key called twice in a row");
         }
@@ -359,8 +359,8 @@ impl SerializeMap for SerializeObject<'_> {
     where
         T: ?Sized + Serialize,
     {
-        // Panic because this indicates a bug in the program rather than an expected
-        // failure.
+        // Panic because this indicates a bug in the program rather than an
+        // expected failure.
         let key = self
             .key
             .take()
@@ -376,8 +376,8 @@ impl SerializeMap for SerializeObject<'_> {
     }
 
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        // Panic because this indicates a bug in the program rather than an expected
-        // failure.
+        // Panic because this indicates a bug in the program rather than an
+        // expected failure.
         if self.key.is_some() {
             panic!("missing serialize_value call after serialize_key");
         }
@@ -710,8 +710,8 @@ impl<'a> Serializer for ValueSerializerMut<'a> {
         let iter = value
             .iter()
             .map(|byte| IValue(IValueImpl::U64(*byte as u64)));
-        // SAFETY: The iterator length is trusted, as it's a simple mapping on a slice
-        // iterator.
+        // SAFETY: The iterator length is trusted, as it's a simple mapping on a
+        // slice iterator.
         let index = unsafe { self.interners.iarray.intern_iter_mut(iter) };
         Ok(IValueImpl::Array(index))
     }
@@ -960,8 +960,8 @@ impl SerializeMap for SerializeObjectMut<'_> {
     where
         T: ?Sized + Serialize,
     {
-        // Panic because this indicates a bug in the program rather than an expected
-        // failure.
+        // Panic because this indicates a bug in the program rather than an
+        // expected failure.
         if self.key.is_some() {
             panic!("serialize_key called twice in a row");
         }
@@ -975,8 +975,8 @@ impl SerializeMap for SerializeObjectMut<'_> {
     where
         T: ?Sized + Serialize,
     {
-        // Panic because this indicates a bug in the program rather than an expected
-        // failure.
+        // Panic because this indicates a bug in the program rather than an
+        // expected failure.
         let key = self
             .key
             .take()
@@ -992,8 +992,8 @@ impl SerializeMap for SerializeObjectMut<'_> {
     }
 
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        // Panic because this indicates a bug in the program rather than an expected
-        // failure.
+        // Panic because this indicates a bug in the program rather than an
+        // expected failure.
         if self.key.is_some() {
             panic!("missing serialize_value call after serialize_key");
         }

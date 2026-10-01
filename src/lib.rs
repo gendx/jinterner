@@ -343,8 +343,8 @@ impl Jinterners {
 
         for array in iarray_iter {
             let iter = array.iter().map(|ivalue| mapping.map(*ivalue));
-            // SAFETY: The iterator length is trusted, as it's a simple mapping on a slice
-            // iterator.
+            // SAFETY: The iterator length is trusted, as it's a simple mapping
+            // on a slice iterator.
             unsafe { jinterners.iarray.push_iter_mut(iter) };
         }
 
@@ -499,7 +499,8 @@ impl RetainBuilder<'_> {
                 .jinterners
                 .iobject
                 .map2(&iobject_map.reverse, |(k, ivalue)| {
-                    // Retained keys are still in the same order, so we don't need to re-sort them.
+                    // Retained keys are still in the same order, so we don't
+                    // need to re-sort them.
                     (mapping.map_str_key(*k), mapping.map(*ivalue))
                 }),
         };
