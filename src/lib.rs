@@ -90,7 +90,41 @@ impl Jinterners {
     }
 }
 
+/// Statistics about a [`Jinterners`] arena.
+///
+/// This struct is returned by the [`stats()`](Jinterners::stats) method.
+pub struct Stats {
+    /// Number of strings in the arena.
+    pub strings: usize,
+    /// Number of string bytes in the arena.
+    pub string_bytes: usize,
+    /// Number of arrays in the arena.
+    pub arrays: usize,
+    /// Number of array items in the arena.
+    pub array_items: usize,
+    /// Number of objects in the arena.
+    pub objects: usize,
+    /// Number of object key-value pairs in the arena.
+    pub object_key_values: usize,
+}
+
 impl Jinterners {
+    /// Returns statistics about this arena.
+    ///
+    /// Note that because [`Jinterners`] is a concurrent data structure, this is
+    /// only a snapshot as viewed by this thread, and the result may change if
+    /// other threads are inserting values.
+    pub fn stats(&self) -> Stats {
+        Stats {
+            strings: self.string.strings(),
+            string_bytes: self.string.bytes(),
+            arrays: self.iarray.slices(),
+            array_items: self.iarray.items(),
+            objects: self.iobject.slices(),
+            object_key_values: self.iobject.items(),
+        }
+    }
+
     /// Interns the given [`serde_json::Value`] into this arena.
     ///
     /// See also [`intern_mut()`](Self::intern_mut), which is more efficient if
