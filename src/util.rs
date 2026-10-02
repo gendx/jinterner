@@ -99,7 +99,7 @@ impl<T> Pool<T> {
 
 impl<T> Pool<T> {
     // mut is only needed in debug mode.
-    #[allow(unused_mut)]
+    #[cfg_attr(not(feature = "debug"), expect(unused_mut))]
     fn pop(&mut self, capacity: Option<usize>) -> Buffer<T> {
         match (self.pool.pop(), capacity) {
             (Some(mut b), None) => {
