@@ -340,8 +340,8 @@ impl<H> Jinterners<H>
 where
     H: Default + BuildHasher,
 {
-    /// Returns an optimized version of this [`Jinterners`], or [`None`] if the
-    /// iteration `limit` is set to zero.
+    /// Returns an optimized version of this [`Jinterners`], or [`None`] if this
+    /// instance was already optimized or the iteration `limit` is set to zero.
     ///
     /// [`IValue`]s rooted in this [`Jinterners`] need to be converted using the
     /// resulting [`Mapping`] to be used in the destination [`Jinterners`].
@@ -648,9 +648,7 @@ where
 
 #[cfg(test)]
 mod test {
-    #[cfg(feature = "retain")]
     use super::*;
-    #[cfg(feature = "retain")]
     use serde_json::json;
 
     #[cfg(feature = "retain")]
@@ -708,5 +706,45 @@ mod test {
                 }
             })
         );
+    }
+
+    #[test]
+    fn test_optimize_strings() {
+        let mut interners: Jinterners = Jinterners::default();
+
+        let mary = interners.intern_mut(json!("Mary"));
+        let john = interners.intern_mut(json!("John"));
+
+        // No optimization happens with a limit of zero.
+        assert!(interners.optimize(Some(0)).is_none());
+
+        // Optimization sorts strings.
+        let (interners, mapping) = interners.optimize(None).unwrap();
+        let mary = mapping.map(mary);
+        assert_eq!(interners.lookup(&mary), json!("Mary"));
+        let john = mapping.map(john);
+        assert_eq!(interners.lookup(&john), json!("John"));
+
+        // Optimizing a second time is a no-op.
+        assert!(interners.optimize(None).is_none());
+    }
+
+    #[test]
+    fn test_optimize_once_strings() {
+        let mut interners: Jinterners = Jinterners::default();
+
+        let mary = interners.intern_mut(json!("Mary"));
+        let john = interners.intern_mut(json!("John"));
+
+        // Optimization sorts strings.
+        let (interners, mapping) = interners.optimize_once().unwrap();
+        let mary = mapping.map(mary);
+        assert_eq!(interners.lookup(&mary), json!("Mary"));
+        let john = mapping.map(john);
+        assert_eq!(interners.lookup(&john), json!("John"));
+
+        // Optimizing a second time is a no-op when the interner only contains
+        // strings.
+        assert!(interners.optimize_once().is_none());
     }
 }
