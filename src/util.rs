@@ -1,16 +1,25 @@
 use crate::{IValue, InternedStrKey};
 use alloc::vec::Vec;
+use blazinterner::DefaultBuildHasher;
 use core::ops::{Deref, DerefMut};
 
 /// Buffers to reuse allocations when deserializing.
-#[derive(Default)]
-pub struct BufferPool {
-    array: Pool<IValue>,
-    object: Pool<(InternedStrKey, IValue)>,
+pub struct BufferPool<H = DefaultBuildHasher> {
+    array: Pool<IValue<H>>,
+    object: Pool<(InternedStrKey<H>, IValue<H>)>,
+}
+
+impl<H> Default for BufferPool<H> {
+    fn default() -> Self {
+        Self {
+            array: Default::default(),
+            object: Default::default(),
+        }
+    }
 }
 
 #[cfg(all(feature = "debug", feature = "std"))]
-impl BufferPool {
+impl<H> BufferPool<H> {
     /// Prints a summary of the storage used by the buffers in this pool.
     pub fn print_summary(&self) {
         self.array.print_summary("array");
@@ -18,34 +27,34 @@ impl BufferPool {
     }
 }
 
-impl BufferPool {
-    pub(crate) fn pop_array(&mut self, capacity: Option<usize>) -> Buffer<IValue> {
+impl<H> BufferPool<H> {
+    pub(crate) fn pop_array(&mut self, capacity: Option<usize>) -> Buffer<IValue<H>> {
         self.array.pop(capacity)
     }
 
-    pub(crate) fn pop_array_with_capacity(&mut self, capacity: usize) -> Buffer<IValue> {
+    pub(crate) fn pop_array_with_capacity(&mut self, capacity: usize) -> Buffer<IValue<H>> {
         self.array.pop_with_capacity(capacity)
     }
 
-    pub(crate) fn push_array(&mut self, b: Buffer<IValue>) {
+    pub(crate) fn push_array(&mut self, b: Buffer<IValue<H>>) {
         self.array.push(b)
     }
 
     pub(crate) fn pop_object(
         &mut self,
         capacity: Option<usize>,
-    ) -> Buffer<(InternedStrKey, IValue)> {
+    ) -> Buffer<(InternedStrKey<H>, IValue<H>)> {
         self.object.pop(capacity)
     }
 
     pub(crate) fn pop_object_with_capacity(
         &mut self,
         capacity: usize,
-    ) -> Buffer<(InternedStrKey, IValue)> {
+    ) -> Buffer<(InternedStrKey<H>, IValue<H>)> {
         self.object.pop_with_capacity(capacity)
     }
 
-    pub(crate) fn push_object(&mut self, b: Buffer<(InternedStrKey, IValue)>) {
+    pub(crate) fn push_object(&mut self, b: Buffer<(InternedStrKey<H>, IValue<H>)>) {
         self.object.push(b)
     }
 }

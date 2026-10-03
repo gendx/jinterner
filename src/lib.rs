@@ -19,9 +19,14 @@ mod detail;
 mod util;
 
 use alloc::vec::Vec;
+#[cfg(feature = "std")]
+pub use blazinterner::StdBuildHasher;
 use blazinterner::{ArenaSlice, ArenaStr, InternedSlice};
+pub use blazinterner::{DefaultBuildHasher, HashbrownBuildHasher};
 #[cfg(feature = "retain")]
 use blazinterner::{RetainSliceBuilder, RetainStrBuilder};
+use core::fmt::Debug;
+use core::hash::BuildHasher;
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
 #[cfg(all(feature = "serde", feature = "sync"))]
@@ -32,27 +37,106 @@ use detail::mapping::{MappingNoStrings, MappingStrings};
 pub use detail::{BoundValue, InterningDeserializerMut};
 pub use detail::{IValue, InternedStrKey, MapRef, ValueRef};
 #[cfg(feature = "get-size2")]
-use get_size2::GetSize;
-use serde_json::Value;
+use get_size2::{GetSize, GetSizeTracker};
 #[cfg(feature = "serde")]
-use serde_tuple::{Deserialize_tuple, Serialize_tuple};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 #[cfg(feature = "serde")]
 use util::Buffer;
 #[cfg(feature = "serde")]
 pub use util::BufferPool;
 
 /// An arena to store interned JSON values.
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize_tuple, Deserialize_tuple))]
-#[cfg_attr(feature = "get-size2", derive(GetSize))]
-pub struct Jinterners {
-    string: ArenaStr,
-    iarray: ArenaSlice<IValue>,
-    iobject: ArenaSlice<(InternedStrKey, IValue)>,
+pub struct Jinterners<H = DefaultBuildHasher> {
+    string: ArenaStr<H>,
+    iarray: ArenaSlice<IValue<H>, H>,
+    iobject: ArenaSlice<(InternedStrKey<H>, IValue<H>), H>,
+}
+
+impl<H> Default for Jinterners<H>
+where
+    H: Default,
+{
+    fn default() -> Self {
+        Self {
+            string: Default::default(),
+            iarray: Default::default(),
+            iobject: Default::default(),
+        }
+    }
+}
+
+impl<H> Debug for Jinterners<H> {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        fmt.debug_struct("Jinterners")
+            .field("string", &self.string)
+            .field("iarray", &self.iarray)
+            .field("iobject", &self.iobject)
+            .finish()
+    }
+}
+
+impl<H> Clone for Jinterners<H>
+where
+    H: Default + BuildHasher,
+{
+    fn clone(&self) -> Self {
+        Self {
+            string: self.string.clone(),
+            iarray: self.iarray.clone(),
+            iobject: self.iobject.clone(),
+        }
+    }
+}
+
+impl<H> PartialEq for Jinterners<H> {
+    fn eq(&self, other: &Self) -> bool {
+        self.string == other.string && self.iarray == other.iarray && self.iobject == other.iobject
+    }
+}
+
+impl<H> Eq for Jinterners<H> {}
+
+#[cfg(feature = "get-size2")]
+impl<H> GetSize for Jinterners<H> {
+    fn get_heap_size_with_tracker<Tr: GetSizeTracker>(&self, tracker: Tr) -> (usize, Tr) {
+        let (size_string, tracker) = GetSize::get_heap_size_with_tracker(&self.string, tracker);
+        let (size_iarray, tracker) = GetSize::get_heap_size_with_tracker(&self.iarray, tracker);
+        let (size_iobject, tracker) = GetSize::get_heap_size_with_tracker(&self.iobject, tracker);
+        (size_string + size_iarray + size_iobject, tracker)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<H> Serialize for Jinterners<H> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        (&self.string, &self.iarray, &self.iobject).serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, H> Deserialize<'de> for Jinterners<H>
+where
+    H: Default + BuildHasher,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let (string, iarray, iobject) = Deserialize::deserialize(deserializer)?;
+        Ok(Self {
+            string,
+            iarray,
+            iobject,
+        })
+    }
 }
 
 #[cfg(feature = "get-size2")]
-impl Jinterners {
+impl<H> Jinterners<H> {
     /// Gets the size in bytes of the underlying string arena.
     pub fn get_size_strings(&self) -> usize {
         self.string.get_size()
@@ -70,7 +154,7 @@ impl Jinterners {
 }
 
 #[cfg(all(feature = "debug", feature = "std"))]
-impl Jinterners {
+impl<H> Jinterners<H> {
     /// Prints a summary of the storage used by the underlying string arena to
     /// stdout.
     pub fn print_summary_strings(&self, prefix: &str, title: &str, total_bytes: usize) {
@@ -108,7 +192,7 @@ pub struct Stats {
     pub object_key_values: usize,
 }
 
-impl Jinterners {
+impl<H> Jinterners<H> {
     /// Returns statistics about this arena.
     ///
     /// Note that because [`Jinterners`] is a concurrent data structure, this is
@@ -124,14 +208,19 @@ impl Jinterners {
             object_key_values: self.iobject.items(),
         }
     }
+}
 
+impl<H> Jinterners<H>
+where
+    H: BuildHasher,
+{
     /// Interns the given [`serde_json::Value`] into this arena.
     ///
     /// See also [`intern_mut()`](Self::intern_mut), which is more efficient if
     /// you hold a mutable reference to this [`Jinterners`] arena as it avoids
     /// acquiring locks.
     #[cfg(feature = "sync")]
-    pub fn intern(&self, source: Value) -> IValue {
+    pub fn intern(&self, source: Value) -> IValue<H> {
         IValue::from(self, source)
     }
 
@@ -141,7 +230,7 @@ impl Jinterners {
     /// efficient if you hold a mutable reference to this [`Jinterners`] arena
     /// as it avoids acquiring locks.
     #[cfg(feature = "sync")]
-    pub fn intern_ref(&self, source: &Value) -> IValue {
+    pub fn intern_ref(&self, source: &Value) -> IValue<H> {
         IValue::from_ref(self, source)
     }
 
@@ -150,7 +239,7 @@ impl Jinterners {
     /// Contrary to [`intern()`](Self::intern), no locks are held internally
     /// because this function already takes an exclusive mutable reference to
     /// this [`Jinterners`] arena.
-    pub fn intern_mut(&mut self, source: Value) -> IValue {
+    pub fn intern_mut(&mut self, source: Value) -> IValue<H> {
         IValue::from_mut(self, source)
     }
 
@@ -159,7 +248,7 @@ impl Jinterners {
     /// Contrary to [`intern_ref()`](Self::intern_ref), no locks are held
     /// internally because this function already takes an exclusive mutable
     /// reference to this [`Jinterners`] arena.
-    pub fn intern_ref_mut(&mut self, source: &Value) -> IValue {
+    pub fn intern_ref_mut(&mut self, source: &Value) -> IValue<H> {
         IValue::from_ref_mut(self, source)
     }
 
@@ -171,7 +260,7 @@ impl Jinterners {
     ///
     /// See also [`lookup_ref()`](Self::lookup_ref) if you only need a shallow
     /// view.
-    pub fn lookup(&self, value: &IValue) -> Value {
+    pub fn lookup(&self, value: &IValue<H>) -> Value {
         value.lookup(self)
     }
 
@@ -184,7 +273,7 @@ impl Jinterners {
     /// Contrary to [`lookup()`](Self::lookup), this function doesn't create a
     /// deep copy of the value, and is therefore likely more efficient if you
     /// only need to query specific object field(s) or array element(s).
-    pub fn lookup_ref(&self, value: &IValue) -> ValueRef<'_> {
+    pub fn lookup_ref(&self, value: &IValue<H>) -> ValueRef<'_, H> {
         value.lookup_ref(self)
     }
 
@@ -197,7 +286,7 @@ impl Jinterners {
     /// efficient if you hold a mutable reference to this [`Jinterners`]
     /// arena as it avoids acquiring locks.
     #[cfg(feature = "sync")]
-    pub fn intern_key(&self, key: &str) -> InternedStrKey {
+    pub fn intern_key(&self, key: &str) -> InternedStrKey<H> {
         InternedStrKey(self.string.intern(key))
     }
 
@@ -209,7 +298,7 @@ impl Jinterners {
     /// Contrary to [`intern_key()`](Self::intern_key), no locks are held
     /// internally because this function already takes an exclusive mutable
     /// reference to this [`Jinterners`] arena.
-    pub fn intern_key_mut(&mut self, key: &str) -> InternedStrKey {
+    pub fn intern_key_mut(&mut self, key: &str) -> InternedStrKey<H> {
         InternedStrKey(self.string.intern_mut(key))
     }
 
@@ -218,7 +307,7 @@ impl Jinterners {
     /// The caller is responsible for ensuring that the same arena was used to
     /// intern this key, otherwise an arbitrary string will be returned or a
     /// panic will happen.
-    pub fn lookup_key(&self, key: InternedStrKey) -> &str {
+    pub fn lookup_key(&self, key: InternedStrKey<H>) -> &str {
         self.string.lookup(key.0)
     }
 
@@ -230,7 +319,7 @@ impl Jinterners {
     /// See also [`find_key_mut()`](Self::find_key_mut), which is more efficient
     /// if you hold a mutable reference to this [`Jinterners`] arena as it
     /// avoids acquiring locks.
-    pub fn find_key(&self, key: &str) -> Option<InternedStrKey> {
+    pub fn find_key(&self, key: &str) -> Option<InternedStrKey<H>> {
         self.string.find(key).map(InternedStrKey)
     }
 
@@ -242,16 +331,21 @@ impl Jinterners {
     /// Contrary to [`find_key()`](Self::find_key), no locks are held internally
     /// because this function already takes an exclusive mutable reference
     /// to this [`Jinterners`] arena.
-    pub fn find_key_mut(&mut self, key: &str) -> Option<InternedStrKey> {
+    pub fn find_key_mut(&mut self, key: &str) -> Option<InternedStrKey<H>> {
         self.string.find_mut(key).map(InternedStrKey)
     }
+}
 
+impl<H> Jinterners<H>
+where
+    H: Default + BuildHasher,
+{
     /// Returns an optimized version of this [`Jinterners`], or [`None`] if the
     /// iteration `limit` is set to zero.
     ///
     /// [`IValue`]s rooted in this [`Jinterners`] need to be converted using the
     /// resulting [`Mapping`] to be used in the destination [`Jinterners`].
-    pub fn optimize(&self, limit: Option<usize>) -> Option<(Jinterners, Mapping)> {
+    pub fn optimize(&self, limit: Option<usize>) -> Option<(Jinterners<H>, Mapping)> {
         if limit == Some(0) {
             return None;
         }
@@ -316,7 +410,7 @@ impl Jinterners {
     ///
     /// [`IValue`]s rooted in this [`Jinterners`] need to be converted using the
     /// resulting [`Mapping`] to be used in the destination [`Jinterners`].
-    pub fn optimize_once(&self) -> Option<(Jinterners, Mapping)> {
+    pub fn optimize_once(&self) -> Option<(Jinterners<H>, Mapping)> {
         let string_map = self.string.sort();
         let iarray_map = self.iarray.sort();
         let iobject_map = self.iobject.sort();
@@ -356,7 +450,7 @@ impl Jinterners {
         Some((jinterners, mapping))
     }
 
-    fn optimize_once_strings(&self) -> Option<(Jinterners, MappingStrings)> {
+    fn optimize_once_strings(&self) -> Option<(Jinterners<H>, MappingStrings)> {
         let string_map = self.string.sort();
         let mapping = MappingStrings {
             string: string_map.forward,
@@ -401,8 +495,8 @@ impl Jinterners {
     fn optimize_once_no_strings(
         &self,
     ) -> Option<(
-        ArenaSlice<IValue>,
-        ArenaSlice<(InternedStrKey, IValue)>,
+        ArenaSlice<IValue<H>, H>,
+        ArenaSlice<(InternedStrKey<H>, IValue<H>), H>,
         MappingNoStrings,
     )> {
         let iarray_map = self.iarray.sort();
@@ -436,19 +530,21 @@ impl Jinterners {
     #[cfg(feature = "retain")]
     pub fn retain_values(
         &self,
-        values: impl Iterator<Item = IValue>,
-    ) -> Option<(Jinterners, Mapping)> {
+        values: impl Iterator<Item = IValue<H>>,
+    ) -> Option<(Jinterners<H>, Mapping)> {
         let mut builder = self.retain_builder();
         for v in values {
             builder.insert(v);
         }
         builder.build()
     }
+}
 
+impl<H> Jinterners<H> {
     /// Returns a builder allowing to select items to retain, and create a
     /// [`Jinterners`] arena containing only these.
     #[cfg(feature = "retain")]
-    pub fn retain_builder(&self) -> RetainBuilder<'_> {
+    pub fn retain_builder(&self) -> RetainBuilder<'_, H> {
         RetainBuilder {
             jinterners: self,
             strings: self.string.retain_builder(),
@@ -465,26 +561,33 @@ impl Jinterners {
 /// This struct is created by the
 /// [`retain_builder()`](Jinterners::retain_builder) method on [`Jinterners`].
 #[cfg(feature = "retain")]
-pub struct RetainBuilder<'a> {
-    jinterners: &'a Jinterners,
-    strings: RetainStrBuilder,
-    arrays: RetainSliceBuilder<IValue>,
-    objects: RetainSliceBuilder<(InternedStrKey, IValue)>,
-    queue_arrays: Vec<InternedSlice<IValue>>,
-    queue_objects: Vec<InternedSlice<(InternedStrKey, IValue)>>,
+#[expect(clippy::type_complexity)]
+pub struct RetainBuilder<'a, H = DefaultBuildHasher> {
+    jinterners: &'a Jinterners<H>,
+    strings: RetainStrBuilder<H>,
+    arrays: RetainSliceBuilder<IValue<H>, H>,
+    objects: RetainSliceBuilder<(InternedStrKey<H>, IValue<H>), H>,
+    queue_arrays: Vec<InternedSlice<IValue<H>, H>>,
+    queue_objects: Vec<InternedSlice<(InternedStrKey<H>, IValue<H>), H>>,
 }
 
 #[cfg(feature = "retain")]
-impl RetainBuilder<'_> {
+impl<H> RetainBuilder<'_, H> {
     /// Marks the given value as retained.
     ///
     /// Returns [`true`] if the value is newly inserted and [`false`] if it was
     /// already inserted before or doesn't need interning (e.g. because it
     /// contains a simple value like an integer).
-    pub fn insert(&mut self, value: IValue) -> bool {
+    pub fn insert(&mut self, value: IValue<H>) -> bool {
         value.retain(self)
     }
+}
 
+#[cfg(feature = "retain")]
+impl<H> RetainBuilder<'_, H>
+where
+    H: Default + BuildHasher,
+{
     /// Returns a [`Jinterners`] containing only the retained [`IValue`]s, as
     /// well as all values transitively referenced by them.
     ///
@@ -494,7 +597,7 @@ impl RetainBuilder<'_> {
     /// [`IValue`]s rooted in the original [`Jinterners`] need to be converted
     /// using the resulting [`Mapping`] to be used in the destination
     /// [`Jinterners`].
-    pub fn build(mut self) -> Option<(Jinterners, Mapping)> {
+    pub fn build(mut self) -> Option<(Jinterners<H>, Mapping)> {
         loop {
             if let Some(a) = self.queue_arrays.pop() {
                 for v in self.jinterners.iarray.lookup(a) {
@@ -553,7 +656,7 @@ mod test {
     #[cfg(feature = "retain")]
     #[test]
     fn retain() {
-        let mut interners = Jinterners::default();
+        let mut interners: Jinterners = Jinterners::default();
 
         let john = interners.intern_mut(json!({
             "name": "John",

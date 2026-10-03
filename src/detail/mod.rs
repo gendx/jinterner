@@ -14,8 +14,12 @@ use alloc::boxed::Box;
 use alloc::string::String;
 #[cfg(feature = "serde")]
 use alloc::vec::Vec;
-use blazinterner::{ArenaStr, InternedSlice, InternedStr};
+use blazinterner::{ArenaStr, DefaultBuildHasher, InternedSlice, InternedStr};
+use core::cmp::Ordering;
 use core::fmt::Debug;
+use core::hash::{BuildHasher, Hash, Hasher};
+#[cfg(feature = "serde")]
+use core::marker::PhantomData;
 #[cfg(feature = "serde")]
 pub use de::InterningDeserializerMut;
 #[cfg(feature = "serde")]
@@ -23,14 +27,16 @@ use de::ValueDeserializer;
 #[cfg(all(feature = "serde", feature = "sync"))]
 pub use de::sync::InterningDeserializer;
 #[cfg(feature = "get-size2")]
-use get_size2::GetSize;
+use get_size2::{GetSize, GetSizeTracker};
 use ordered_float::OrderedFloat;
 #[cfg(all(feature = "serde", feature = "sync"))]
 use ser::ValueSerializer;
 #[cfg(feature = "serde")]
 use ser::ValueSerializerMut;
 #[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use serde::de::{EnumAccess, VariantAccess, Visitor};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[cfg(feature = "serde")]
 use serde_json::Deserializer as SerdeJsonDeserializer;
 use serde_json::{Number, Value};
@@ -42,15 +48,15 @@ use std::io::{Read, Write};
 ///
 /// This is for example useful to serialize the value as plain JSON data.
 #[cfg(feature = "serde")]
-pub struct BoundValue<'a> {
-    value: &'a IValue,
-    interners: &'a Jinterners,
+pub struct BoundValue<'a, H = DefaultBuildHasher> {
+    value: &'a IValue<H>,
+    interners: &'a Jinterners<H>,
 }
 
 #[cfg(feature = "serde")]
-impl<'a> BoundValue<'a> {
+impl<'a, H> BoundValue<'a, H> {
     /// Binds the given [`IValue`] with its associated [`Jinterners`] arena.
-    pub fn new(value: &'a IValue, interners: &'a Jinterners) -> Self {
+    pub fn new(value: &'a IValue<H>, interners: &'a Jinterners<H>) -> Self {
         Self { value, interners }
     }
 }
@@ -59,24 +65,166 @@ impl<'a> BoundValue<'a> {
 ///
 /// You can obtain a key with [`Jinterners::find_key()`] and use it to lookup
 /// values in JSON objects with [`MapRef::get_by_key()`].
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "get-size2", derive(GetSize))]
-pub struct InternedStrKey(pub(crate) InternedStr);
+pub struct InternedStrKey<H = DefaultBuildHasher>(pub(crate) InternedStr<H>);
 
-impl Default for InternedStrKey {
+impl<H> Default for InternedStrKey<H> {
     fn default() -> Self {
         InternedStrKey(InternedStr::from_id(0))
     }
 }
 
-/// An interned JSON value.
-#[derive(Default, Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "get-size2", derive(GetSize))]
-pub struct IValue(IValueImpl);
+impl<H> Debug for InternedStrKey<H> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("InternedStrKey").field(&self.0).finish()
+    }
+}
 
-impl IValue {
+impl<H> Clone for InternedStrKey<H> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<H> Copy for InternedStrKey<H> {}
+
+impl<H> PartialEq for InternedStrKey<H> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+
+impl<H> Eq for InternedStrKey<H> {}
+
+impl<H> PartialOrd for InternedStrKey<H> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<H> Ord for InternedStrKey<H> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl<H> Hash for InternedStrKey<H> {
+    fn hash<G>(&self, state: &mut G)
+    where
+        G: Hasher,
+    {
+        self.0.hash(state);
+    }
+}
+
+#[cfg(feature = "get-size2")]
+impl<H> GetSize for InternedStrKey<H> {
+    fn get_heap_size_with_tracker<Tr: GetSizeTracker>(&self, tracker: Tr) -> (usize, Tr) {
+        GetSize::get_heap_size_with_tracker(&self.0, tracker)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<H> Serialize for InternedStrKey<H> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, H> Deserialize<'de> for InternedStrKey<H> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let inner = Deserialize::deserialize(deserializer)?;
+        Ok(Self(inner))
+    }
+}
+
+/// An interned JSON value.
+pub struct IValue<H = DefaultBuildHasher>(IValueImpl<H>);
+
+impl<H> Default for IValue<H> {
+    fn default() -> Self {
+        IValue(Default::default())
+    }
+}
+
+impl<H> Debug for IValue<H> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<H> Clone for IValue<H> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<H> Copy for IValue<H> {}
+
+impl<H> PartialEq for IValue<H> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+
+impl<H> Eq for IValue<H> {}
+
+impl<H> PartialOrd for IValue<H> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<H> Ord for IValue<H> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl<H> Hash for IValue<H> {
+    fn hash<G>(&self, state: &mut G)
+    where
+        G: Hasher,
+    {
+        self.0.hash(state);
+    }
+}
+
+#[cfg(feature = "get-size2")]
+impl<H> GetSize for IValue<H> {
+    fn get_heap_size_with_tracker<Tr: GetSizeTracker>(&self, tracker: Tr) -> (usize, Tr) {
+        GetSize::get_heap_size_with_tracker(&self.0, tracker)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<H> Serialize for IValue<H> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, H> Deserialize<'de> for IValue<H> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let inner = Deserialize::deserialize(deserializer)?;
+        Ok(Self(inner))
+    }
+}
+
+impl<H> IValue<H> {
     /// Interns a null JSON value.
     pub fn null() -> Self {
         Self(IValueImpl::Null)
@@ -101,14 +249,19 @@ impl IValue {
     pub fn f64(x: f64) -> Self {
         Self(IValueImpl::F64(Float64(OrderedFloat(x))))
     }
+}
 
+impl<H> IValue<H>
+where
+    H: BuildHasher,
+{
     /// Interns a string JSON value.
     ///
     /// See also [`string_mut()`](Self::string_mut), which is more efficient if
     /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
     /// acquiring locks.
     #[cfg(feature = "sync")]
-    pub fn string(interners: &Jinterners, s: &str) -> Self {
+    pub fn string(interners: &Jinterners<H>, s: &str) -> Self {
         Self(IValueImpl::String(interners.string.intern(s)))
     }
 
@@ -117,7 +270,7 @@ impl IValue {
     /// Contrary to [`string()`](Self::string), no locks are held internally
     /// because this function already takes an exclusive mutable reference to
     /// the [`Jinterners`] arena.
-    pub fn string_mut(interners: &mut Jinterners, s: &str) -> Self {
+    pub fn string_mut(interners: &mut Jinterners<H>, s: &str) -> Self {
         Self(IValueImpl::String(interners.string.intern_mut(s)))
     }
 
@@ -127,7 +280,7 @@ impl IValue {
     /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
     /// acquiring locks.
     #[cfg(feature = "sync")]
-    pub fn array(interners: &Jinterners, a: &[Self]) -> Self {
+    pub fn array(interners: &Jinterners<H>, a: &[Self]) -> Self {
         Self(IValueImpl::Array(interners.iarray.intern_copy(a)))
     }
 
@@ -136,7 +289,7 @@ impl IValue {
     /// Contrary to [`array()`](Self::array), no locks are held internally
     /// because this function already takes an exclusive mutable reference to
     /// the [`Jinterners`] arena.
-    pub fn array_mut(interners: &mut Jinterners, a: &[Self]) -> Self {
+    pub fn array_mut(interners: &mut Jinterners<H>, a: &[Self]) -> Self {
         Self(IValueImpl::Array(interners.iarray.intern_copy_mut(a)))
     }
 
@@ -146,7 +299,7 @@ impl IValue {
     /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
     /// acquiring locks.
     #[cfg(feature = "sync")]
-    pub fn object<'a>(interners: &Jinterners, o: impl Iterator<Item = (&'a str, Self)>) -> Self {
+    pub fn object<'a>(interners: &Jinterners<H>, o: impl Iterator<Item = (&'a str, Self)>) -> Self {
         let mut io: Box<[_]> = o
             .map(|(k, v)| (InternedStrKey(interners.string.intern(k)), v))
             .collect();
@@ -160,7 +313,7 @@ impl IValue {
     /// because this function already takes an exclusive mutable reference to
     /// the [`Jinterners`] arena.
     pub fn object_mut<'a>(
-        interners: &mut Jinterners,
+        interners: &mut Jinterners<H>,
         o: impl Iterator<Item = (&'a str, Self)>,
     ) -> Self {
         let mut io: Box<[_]> = o
@@ -177,8 +330,8 @@ impl IValue {
     /// arena as it avoids acquiring locks.
     #[cfg(feature = "sync")]
     pub fn object_from_keys(
-        interners: &Jinterners,
-        o: impl Iterator<Item = (InternedStrKey, Self)>,
+        interners: &Jinterners<H>,
+        o: impl Iterator<Item = (InternedStrKey<H>, Self)>,
     ) -> Self {
         let mut io: Box<[_]> = o.collect();
         io.sort_unstable_by_key(|(k, _)| *k);
@@ -191,8 +344,8 @@ impl IValue {
     /// held internally because this function already takes an exclusive mutable
     /// reference to the [`Jinterners`] arena.
     pub fn object_from_keys_mut(
-        interners: &mut Jinterners,
-        o: impl Iterator<Item = (InternedStrKey, Self)>,
+        interners: &mut Jinterners<H>,
+        o: impl Iterator<Item = (InternedStrKey<H>, Self)>,
     ) -> Self {
         let mut io: Box<[_]> = o.collect();
         io.sort_unstable_by_key(|(k, _)| *k);
@@ -202,38 +355,38 @@ impl IValue {
     /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
     /// arena.
     #[cfg(feature = "sync")]
-    pub(crate) fn from(interners: &Jinterners, source: Value) -> Self {
+    pub(crate) fn from(interners: &Jinterners<H>, source: Value) -> Self {
         Self(IValueImpl::from(interners, source))
     }
 
     /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
     /// arena.
     #[cfg(feature = "sync")]
-    pub(crate) fn from_ref(interners: &Jinterners, source: &Value) -> Self {
+    pub(crate) fn from_ref(interners: &Jinterners<H>, source: &Value) -> Self {
         Self(IValueImpl::from_ref(interners, source))
     }
 
     /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
     /// arena.
-    pub(crate) fn from_mut(interners: &mut Jinterners, source: Value) -> Self {
+    pub(crate) fn from_mut(interners: &mut Jinterners<H>, source: Value) -> Self {
         Self(IValueImpl::from_mut(interners, source))
     }
 
     /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
     /// arena.
-    pub(crate) fn from_ref_mut(interners: &mut Jinterners, source: &Value) -> Self {
+    pub(crate) fn from_ref_mut(interners: &mut Jinterners<H>, source: &Value) -> Self {
         Self(IValueImpl::from_ref_mut(interners, source))
     }
 
     /// Retrieves the corresponding [`serde_json::Value`] inside the given
     /// [`Jinterners`] arena.
-    pub(crate) fn lookup(&self, interners: &Jinterners) -> Value {
+    pub(crate) fn lookup(&self, interners: &Jinterners<H>) -> Value {
         self.0.lookup(interners)
     }
 
     /// Performs a shallow lookup of this value inside the given [`Jinterners`]
     /// arena.
-    pub(crate) fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
+    pub(crate) fn lookup_ref<'a>(&self, interners: &'a Jinterners<H>) -> ValueRef<'a, H> {
         self.0.lookup_ref(interners)
     }
 
@@ -244,7 +397,10 @@ impl IValue {
     /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
     /// it avoids acquiring locks.
     #[cfg(all(feature = "serde", feature = "sync"))]
-    pub fn from_value<T>(value: T, interners: &Jinterners) -> Result<Self, serde_json::error::Error>
+    pub fn from_value<T>(
+        value: T,
+        interners: &Jinterners<H>,
+    ) -> Result<Self, serde_json::error::Error>
     where
         T: Serialize,
     {
@@ -265,7 +421,7 @@ impl IValue {
     #[cfg(feature = "serde")]
     pub fn from_value_mut<T>(
         value: T,
-        interners: &mut Jinterners,
+        interners: &mut Jinterners<H>,
     ) -> Result<Self, serde_json::error::Error>
     where
         T: Serialize,
@@ -283,7 +439,7 @@ impl IValue {
     #[cfg(feature = "serde")]
     pub fn to_value<'de, T>(
         &self,
-        interners: &'de Jinterners,
+        interners: &'de Jinterners<H>,
     ) -> Result<T, serde_json::error::Error>
     where
         T: Deserialize<'de>,
@@ -304,7 +460,7 @@ impl IValue {
     #[cfg(all(feature = "serde", feature = "sync"))]
     pub fn from_json_slice(
         json: &[u8],
-        interners: &Jinterners,
+        interners: &Jinterners<H>,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_slice(json);
         let mut buffers = BufferPool::default();
@@ -324,7 +480,7 @@ impl IValue {
     #[cfg(all(feature = "serde", feature = "sync"))]
     pub fn from_json_str(
         json: &str,
-        interners: &Jinterners,
+        interners: &Jinterners<H>,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_str(json);
         let mut buffers = BufferPool::default();
@@ -344,7 +500,7 @@ impl IValue {
     #[cfg(all(feature = "serde", feature = "std", feature = "sync"))]
     pub fn from_json_reader<R: Read>(
         json: R,
-        interners: &Jinterners,
+        interners: &Jinterners<H>,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_reader(json);
         let mut buffers = BufferPool::default();
@@ -364,7 +520,7 @@ impl IValue {
     #[cfg(feature = "serde")]
     pub fn from_json_slice_mut(
         json: &[u8],
-        interners: &mut Jinterners,
+        interners: &mut Jinterners<H>,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_slice(json);
         let mut buffers = BufferPool::default();
@@ -384,7 +540,7 @@ impl IValue {
     #[cfg(feature = "serde")]
     pub fn from_json_str_mut(
         json: &str,
-        interners: &mut Jinterners,
+        interners: &mut Jinterners<H>,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_str(json);
         let mut buffers = BufferPool::default();
@@ -404,7 +560,7 @@ impl IValue {
     #[cfg(all(feature = "serde", feature = "std"))]
     pub fn from_json_reader_mut<R: Read>(
         json: R,
-        interners: &mut Jinterners,
+        interners: &mut Jinterners<H>,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_reader(json);
         let mut buffers = BufferPool::default();
@@ -419,7 +575,7 @@ impl IValue {
     #[cfg(feature = "serde")]
     pub fn to_json_bytes(
         &self,
-        interners: &Jinterners,
+        interners: &Jinterners<H>,
     ) -> Result<Vec<u8>, serde_json::error::Error> {
         serde_json::to_vec(&BoundValue::new(self, interners))
     }
@@ -429,7 +585,7 @@ impl IValue {
     #[cfg(feature = "serde")]
     pub fn to_json_bytes_pretty(
         &self,
-        interners: &Jinterners,
+        interners: &Jinterners<H>,
     ) -> Result<Vec<u8>, serde_json::error::Error> {
         serde_json::to_vec_pretty(&BoundValue::new(self, interners))
     }
@@ -439,7 +595,7 @@ impl IValue {
     #[cfg(feature = "serde")]
     pub fn to_json_string(
         &self,
-        interners: &Jinterners,
+        interners: &Jinterners<H>,
     ) -> Result<String, serde_json::error::Error> {
         serde_json::to_string(&BoundValue::new(self, interners))
     }
@@ -449,7 +605,7 @@ impl IValue {
     #[cfg(feature = "serde")]
     pub fn to_json_string_pretty(
         &self,
-        interners: &Jinterners,
+        interners: &Jinterners<H>,
     ) -> Result<String, serde_json::error::Error> {
         serde_json::to_string_pretty(&BoundValue::new(self, interners))
     }
@@ -460,7 +616,7 @@ impl IValue {
     pub fn to_json_writer<W: Write>(
         &self,
         writer: W,
-        interners: &Jinterners,
+        interners: &Jinterners<H>,
     ) -> Result<(), serde_json::error::Error> {
         serde_json::to_writer(writer, &BoundValue::new(self, interners))
     }
@@ -471,13 +627,15 @@ impl IValue {
     pub fn to_json_writer_pretty<W: Write>(
         &self,
         writer: W,
-        interners: &Jinterners,
+        interners: &Jinterners<H>,
     ) -> Result<(), serde_json::error::Error> {
         serde_json::to_writer_pretty(writer, &BoundValue::new(self, interners))
     }
+}
 
+impl<H> IValue<H> {
     #[cfg(feature = "retain")]
-    pub(crate) fn retain(&self, builder: &mut RetainBuilder) -> bool {
+    pub(crate) fn retain(&self, builder: &mut RetainBuilder<H>) -> bool {
         match self.0 {
             IValueImpl::Null
             | IValueImpl::Bool(_)
@@ -521,24 +679,220 @@ impl GetSize for Float64 {
     // the box.
 }
 
-#[derive(Default, Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "get-size2", derive(GetSize))]
-enum IValueImpl {
+#[derive(Default)]
+enum IValueImpl<H> {
     #[default]
     Null,
     Bool(bool),
     U64(u64),
     I64(i64),
     F64(Float64),
-    String(InternedStr),
-    Array(InternedSlice<IValue>),
-    Object(InternedSlice<(InternedStrKey, IValue)>),
+    String(InternedStr<H>),
+    Array(InternedSlice<IValue<H>, H>),
+    Object(InternedSlice<(InternedStrKey<H>, IValue<H>), H>),
 }
 
-impl IValueImpl {
+impl<H> Debug for IValueImpl<H> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            IValueImpl::Null => f.debug_tuple("IValue::Null").finish(),
+            IValueImpl::Bool(x) => f.debug_tuple("IValue::Bool").field(x).finish(),
+            IValueImpl::U64(x) => f.debug_tuple("IValue::U64").field(x).finish(),
+            IValueImpl::I64(x) => f.debug_tuple("IValue::I64").field(x).finish(),
+            IValueImpl::F64(Float64(OrderedFloat(x))) => {
+                f.debug_tuple("IValue::F64").field(x).finish()
+            }
+            IValueImpl::String(s) => f.debug_tuple("IValue::String").field(s).finish(),
+            IValueImpl::Array(a) => f.debug_tuple("IValue::Array").field(a).finish(),
+            IValueImpl::Object(o) => f.debug_tuple("IValue::Object").field(o).finish(),
+        }
+    }
+}
+
+impl<H> Clone for IValueImpl<H> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<H> Copy for IValueImpl<H> {}
+
+impl<H> PartialEq for IValueImpl<H> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (IValueImpl::Null, IValueImpl::Null) => true,
+            (IValueImpl::Bool(a), IValueImpl::Bool(b)) => a == b,
+            (IValueImpl::U64(a), IValueImpl::U64(b)) => a == b,
+            (IValueImpl::I64(a), IValueImpl::I64(b)) => a == b,
+            (IValueImpl::F64(a), IValueImpl::F64(b)) => a == b,
+            (IValueImpl::String(a), IValueImpl::String(b)) => a == b,
+            (IValueImpl::Array(a), IValueImpl::Array(b)) => a == b,
+            (IValueImpl::Object(a), IValueImpl::Object(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl<H> Eq for IValueImpl<H> {}
+
+impl<H> PartialOrd for IValueImpl<H> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<H> Ord for IValueImpl<H> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.discriminant().cmp(&other.discriminant()) {
+            Ordering::Less => Ordering::Less,
+            Ordering::Greater => Ordering::Greater,
+            Ordering::Equal => match (self, other) {
+                (IValueImpl::Null, IValueImpl::Null) => Ordering::Equal,
+                (IValueImpl::Bool(a), IValueImpl::Bool(b)) => a.cmp(b),
+                (IValueImpl::U64(a), IValueImpl::U64(b)) => a.cmp(b),
+                (IValueImpl::I64(a), IValueImpl::I64(b)) => a.cmp(b),
+                (IValueImpl::F64(a), IValueImpl::F64(b)) => a.cmp(b),
+                (IValueImpl::String(a), IValueImpl::String(b)) => a.cmp(b),
+                (IValueImpl::Array(a), IValueImpl::Array(b)) => a.cmp(b),
+                (IValueImpl::Object(a), IValueImpl::Object(b)) => a.cmp(b),
+                _ => unreachable!(),
+            },
+        }
+    }
+}
+
+impl<H> Hash for IValueImpl<H> {
+    fn hash<G>(&self, state: &mut G)
+    where
+        G: Hasher,
+    {
+        core::mem::discriminant(self).hash(state);
+        match self {
+            IValueImpl::Null => (),
+            IValueImpl::Bool(x) => x.hash(state),
+            IValueImpl::U64(x) => x.hash(state),
+            IValueImpl::I64(x) => x.hash(state),
+            IValueImpl::F64(x) => x.hash(state),
+            IValueImpl::String(s) => s.hash(state),
+            IValueImpl::Array(a) => a.hash(state),
+            IValueImpl::Object(o) => o.hash(state),
+        }
+    }
+}
+
+#[cfg(feature = "get-size2")]
+impl<H> GetSize for IValueImpl<H> {
+    // There is nothing on the heap, so the default implementation works out of
+    // the box.
+}
+
+#[cfg(feature = "serde")]
+impl<H> Serialize for IValueImpl<H> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            IValueImpl::Null => serializer.serialize_unit_variant("IValueImpl", 0, "Null"),
+            IValueImpl::Bool(x) => serializer.serialize_newtype_variant("IValueImpl", 1, "Bool", x),
+            IValueImpl::U64(x) => serializer.serialize_newtype_variant("IValueImpl", 2, "U64", x),
+            IValueImpl::I64(x) => serializer.serialize_newtype_variant("IValueImpl", 3, "I64", x),
+            IValueImpl::F64(x) => serializer.serialize_newtype_variant("IValueImpl", 4, "F64", x),
+            IValueImpl::String(x) => {
+                serializer.serialize_newtype_variant("IValueImpl", 5, "String", x)
+            }
+            IValueImpl::Array(x) => {
+                serializer.serialize_newtype_variant("IValueImpl", 6, "Array", x)
+            }
+            IValueImpl::Object(x) => {
+                serializer.serialize_newtype_variant("IValueImpl", 7, "Object", x)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, H> Deserialize<'de> for IValueImpl<H> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_enum(
+            "IValueImpl",
+            &[
+                "Null", "Bool", "U64", "I64", "F64", "String", "Array", "Object",
+            ],
+            IValueImplVisitor(PhantomData),
+        )
+    }
+}
+
+#[cfg(feature = "serde")]
+struct IValueImplVisitor<H>(PhantomData<fn() -> IValueImpl<H>>);
+
+#[cfg(feature = "serde")]
+impl<'de, H> Visitor<'de> for IValueImplVisitor<H> {
+    type Value = IValueImpl<H>;
+
+    fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+        formatter.write_str("an enumeration")
+    }
+
+    fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+    where
+        A: EnumAccess<'de>,
+    {
+        #[derive(Deserialize)]
+        enum IValueImplVariant {
+            Null,
+            Bool,
+            U64,
+            I64,
+            F64,
+            String,
+            Array,
+            Object,
+        }
+
+        let (variant, data) = data.variant()?;
+        Ok(match variant {
+            IValueImplVariant::Null => {
+                data.unit_variant()?;
+                IValueImpl::Null
+            }
+            IValueImplVariant::Bool => IValueImpl::Bool(data.newtype_variant()?),
+            IValueImplVariant::U64 => IValueImpl::U64(data.newtype_variant()?),
+            IValueImplVariant::I64 => IValueImpl::I64(data.newtype_variant()?),
+            IValueImplVariant::F64 => IValueImpl::F64(data.newtype_variant()?),
+            IValueImplVariant::String => IValueImpl::String(data.newtype_variant()?),
+            IValueImplVariant::Array => IValueImpl::Array(data.newtype_variant()?),
+            IValueImplVariant::Object => IValueImpl::Object(data.newtype_variant()?),
+        })
+    }
+}
+
+impl<H> IValueImpl<H> {
+    // This is needed because core::mem::Discriminant doesn't implement Ord.
+    fn discriminant(&self) -> usize {
+        match self {
+            IValueImpl::Null => 0,
+            IValueImpl::Bool(_) => 1,
+            IValueImpl::U64(_) => 2,
+            IValueImpl::I64(_) => 3,
+            IValueImpl::F64(_) => 4,
+            IValueImpl::String(_) => 5,
+            IValueImpl::Array(_) => 6,
+            IValueImpl::Object(_) => 7,
+        }
+    }
+}
+
+impl<H> IValueImpl<H>
+where
+    H: BuildHasher,
+{
     #[cfg(feature = "sync")]
-    fn from(interners: &Jinterners, source: Value) -> Self {
+    fn from(interners: &Jinterners<H>, source: Value) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
             Value::Bool(x) => IValueImpl::Bool(x),
@@ -576,7 +930,7 @@ impl IValueImpl {
     }
 
     #[cfg(feature = "sync")]
-    fn from_ref(interners: &Jinterners, source: &Value) -> Self {
+    fn from_ref(interners: &Jinterners<H>, source: &Value) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
             Value::Bool(x) => IValueImpl::Bool(*x),
@@ -613,7 +967,7 @@ impl IValueImpl {
         }
     }
 
-    fn from_mut(interners: &mut Jinterners, source: Value) -> Self {
+    fn from_mut(interners: &mut Jinterners<H>, source: Value) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
             Value::Bool(x) => IValueImpl::Bool(x),
@@ -650,7 +1004,7 @@ impl IValueImpl {
         }
     }
 
-    fn from_ref_mut(interners: &mut Jinterners, source: &Value) -> Self {
+    fn from_ref_mut(interners: &mut Jinterners<H>, source: &Value) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
             Value::Bool(x) => IValueImpl::Bool(*x),
@@ -687,7 +1041,7 @@ impl IValueImpl {
         }
     }
 
-    fn lookup(&self, interners: &Jinterners) -> Value {
+    fn lookup(&self, interners: &Jinterners<H>) -> Value {
         match self {
             IValueImpl::Null => Value::Null,
             IValueImpl::Bool(x) => Value::Bool(*x),
@@ -716,7 +1070,7 @@ impl IValueImpl {
         }
     }
 
-    fn lookup_ref<'a>(&self, interners: &'a Jinterners) -> ValueRef<'a> {
+    fn lookup_ref<'a>(&self, interners: &'a Jinterners<H>) -> ValueRef<'a, H> {
         match self {
             IValueImpl::Null => ValueRef::Null,
             IValueImpl::Bool(x) => ValueRef::Bool(*x),
@@ -734,7 +1088,7 @@ impl IValueImpl {
 }
 
 /// A shallow reference to a JSON value.
-pub enum ValueRef<'a> {
+pub enum ValueRef<'a, H = DefaultBuildHasher> {
     /// JSON null value.
     Null,
     /// JSON boolean value.
@@ -748,32 +1102,37 @@ pub enum ValueRef<'a> {
     /// JSON string.
     String(&'a str),
     /// JSON array.
-    Array(&'a [IValue]),
+    Array(&'a [IValue<H>]),
     /// JSON object.
-    Object(MapRef<'a>),
+    Object(MapRef<'a, H>),
 }
 
 /// A shallow reference to a JSON map.
-pub struct MapRef<'a> {
-    arena_str: &'a ArenaStr,
-    map: &'a [(InternedStrKey, IValue)],
+pub struct MapRef<'a, H = DefaultBuildHasher> {
+    arena_str: &'a ArenaStr<H>,
+    map: &'a [(InternedStrKey<H>, IValue<H>)],
 }
 
-impl<'a> MapRef<'a> {
+impl<'a, H> MapRef<'a, H>
+where
+    H: BuildHasher,
+{
     /// Returns the value associated to the given key, or [`None`] if there is
     /// no such key in this map.
     ///
     /// If you're repeatedly querying the same key, it's more efficient to cache
     /// it once with [`Jinterners::find_key()`] and then use
     /// [`get_by_key()`](Self::get_by_key).
-    pub fn get(&self, key: &str) -> Option<&'a IValue> {
+    pub fn get(&self, key: &str) -> Option<&'a IValue<H>> {
         let k = InternedStrKey(self.arena_str.find(key)?);
         self.get_by_key(k)
     }
+}
 
+impl<'a, H> MapRef<'a, H> {
     /// Returns the value associated to the given key, or [`None`] if there is
     /// no such key in this map.
-    pub fn get_by_key(&self, key: InternedStrKey) -> Option<&'a IValue> {
+    pub fn get_by_key(&self, key: InternedStrKey<H>) -> Option<&'a IValue<H>> {
         let i = self.map.binary_search_by_key(&key, |entry| entry.0).ok()?;
         Some(&self.map[i].1)
     }
@@ -783,7 +1142,7 @@ impl<'a> MapRef<'a> {
     /// See also [`iter_keys()`](Self::iter_keys) which is more efficient if you
     /// only need to manipulate [`InternedStrKey`]s as it doesn't resolve them
     /// to strings.
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&'a str, &'a IValue)> {
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&'a str, &'a IValue<H>)> {
         self.map
             .iter()
             .map(|(k, v)| (self.arena_str.lookup(k.0), v))
@@ -794,7 +1153,7 @@ impl<'a> MapRef<'a> {
     ///
     /// Note that keys are sorted using the ordering on the [`InternedStrKey`]
     /// type, i.e. the corresponding strings are in arbitrary order.
-    pub fn iter_keys(&self) -> impl ExactSizeIterator<Item = (InternedStrKey, &'a IValue)> {
+    pub fn iter_keys(&self) -> impl ExactSizeIterator<Item = (InternedStrKey<H>, &'a IValue<H>)> {
         self.map.iter().map(|(k, v)| (*k, v))
     }
 }
@@ -809,7 +1168,7 @@ mod delta {
     use serde::ser::SerializeTuple;
     use serde::{Deserializer, Serializer};
 
-    impl Serialize for DeltaEncoding<Jinterners> {
+    impl<H> Serialize for DeltaEncoding<Jinterners<H>> {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
@@ -818,11 +1177,11 @@ mod delta {
 
             tuple.serialize_element(&self.inner.string)?;
 
-            let iarray: RawDeltaEncoding<_, IArrayAccumulator> =
+            let iarray: RawDeltaEncoding<_, IArrayAccumulator<H>> =
                 RawDeltaEncoding::new(&self.inner.iarray);
             tuple.serialize_element(&iarray)?;
 
-            let iobject: RawDeltaEncoding<_, IObjectAccumulator> =
+            let iobject: RawDeltaEncoding<_, IObjectAccumulator<H>> =
                 RawDeltaEncoding::new(&self.inner.iobject);
             tuple.serialize_element(&iobject)?;
 
@@ -830,19 +1189,25 @@ mod delta {
         }
     }
 
-    impl<'de> Deserialize<'de> for DeltaEncoding<Jinterners> {
+    impl<'de, H> Deserialize<'de> for DeltaEncoding<Jinterners<H>>
+    where
+        H: Default + BuildHasher,
+    {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
             D: Deserializer<'de>,
         {
-            deserializer.deserialize_tuple(3, DeltaJinternersVisitor)
+            deserializer.deserialize_tuple(3, DeltaJinternersVisitor(PhantomData))
         }
     }
 
-    struct DeltaJinternersVisitor;
+    struct DeltaJinternersVisitor<H>(PhantomData<fn() -> DeltaEncoding<Jinterners<H>>>);
 
-    impl<'de> Visitor<'de> for DeltaJinternersVisitor {
-        type Value = DeltaEncoding<Jinterners>;
+    impl<'de, H> Visitor<'de> for DeltaJinternersVisitor<H>
+    where
+        H: Default + BuildHasher,
+    {
+        type Value = DeltaEncoding<Jinterners<H>>;
 
         fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
             formatter.write_str("a tuple with 3 elements")
@@ -855,12 +1220,13 @@ mod delta {
             let string = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(0, &self))?;
-            let iarray: RawDeltaEncoding<ArenaSlice<IValue>, IArrayAccumulator> = seq
+            let iarray: RawDeltaEncoding<ArenaSlice<IValue<H>, H>, IArrayAccumulator<H>> = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+            #[expect(clippy::type_complexity)]
             let iobject: RawDeltaEncoding<
-                ArenaSlice<(InternedStrKey, IValue)>,
-                IObjectAccumulator,
+                ArenaSlice<(InternedStrKey<H>, IValue<H>), H>,
+                IObjectAccumulator<H>,
             > = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(2, &self))?;
@@ -887,7 +1253,7 @@ mod delta {
         Object(i32),
     }
 
-    struct IValueAccumulator {
+    struct IValueAccumulator<H> {
         b: bool,
         u: u64,
         i: i64,
@@ -895,9 +1261,10 @@ mod delta {
         s: u32,
         a: u32,
         o: u32,
+        _phantom: PhantomData<fn() -> IValueImpl<H>>,
     }
 
-    impl Default for IValueAccumulator {
+    impl<H> Default for IValueAccumulator<H> {
         fn default() -> Self {
             Self {
                 b: false,
@@ -907,13 +1274,14 @@ mod delta {
                 s: 0,
                 a: 0,
                 o: 0,
+                _phantom: PhantomData,
             }
         }
     }
 
-    impl Accumulator for IValueAccumulator {
-        type Value = IValueImpl;
-        type Storage = IValueImpl;
+    impl<H> Accumulator for IValueAccumulator<H> {
+        type Value = IValueImpl<H>;
+        type Storage = IValueImpl<H>;
         type Delta = IValueDelta;
         type DeltaStorage = IValueDelta;
 
@@ -1000,12 +1368,17 @@ mod delta {
         }
     }
 
-    #[derive(Default)]
-    pub struct IArrayAccumulator(IValueAccumulator);
+    struct IArrayAccumulator<H>(IValueAccumulator<H>);
 
-    impl Accumulator for IArrayAccumulator {
-        type Value = [IValue];
-        type Storage = Box<[IValue]>;
+    impl<H> Default for IArrayAccumulator<H> {
+        fn default() -> Self {
+            Self(Default::default())
+        }
+    }
+
+    impl<H> Accumulator for IArrayAccumulator<H> {
+        type Value = [IValue<H>];
+        type Storage = Box<[IValue<H>]>;
         type Delta = [IValueDelta];
         type DeltaStorage = Box<[IValueDelta]>;
 
@@ -1018,14 +1391,21 @@ mod delta {
         }
     }
 
-    #[derive(Default)]
-    pub struct IObjectAccumulator {
-        map: HashMap<u32, IValueAccumulator>,
+    struct IObjectAccumulator<H> {
+        map: HashMap<u32, IValueAccumulator<H>>,
     }
 
-    impl Accumulator for IObjectAccumulator {
-        type Value = [(InternedStrKey, IValue)];
-        type Storage = Box<[(InternedStrKey, IValue)]>;
+    impl<H> Default for IObjectAccumulator<H> {
+        fn default() -> Self {
+            Self {
+                map: Default::default(),
+            }
+        }
+    }
+
+    impl<H> Accumulator for IObjectAccumulator<H> {
+        type Value = [(InternedStrKey<H>, IValue<H>)];
+        type Storage = Box<[(InternedStrKey<H>, IValue<H>)]>;
         type Delta = [(i32, IValueDelta)];
         type DeltaStorage = Box<[(i32, IValueDelta)]>;
 
@@ -1137,7 +1517,7 @@ mod serde_test {
     #[test]
     #[expect(clippy::approx_constant)]
     fn round_trip() {
-        let interners = Jinterners::default();
+        let interners: Jinterners = Jinterners::default();
 
         let original = make_foo();
         let ivalue = IValue::from_value(&original, &interners).expect("Failed to intern value");
@@ -1173,7 +1553,7 @@ mod serde_test {
     #[test]
     #[expect(clippy::approx_constant)]
     fn round_trip_mut() {
-        let mut interners = Jinterners::default();
+        let mut interners: Jinterners = Jinterners::default();
 
         let original = make_foo();
         let ivalue =
@@ -1210,7 +1590,7 @@ mod serde_test {
     #[test]
     #[expect(clippy::approx_constant)]
     fn deserialize_smaller() {
-        let mut interners = Jinterners::default();
+        let mut interners: Jinterners = Jinterners::default();
 
         let json = json!({
             "a": true,
@@ -1240,7 +1620,7 @@ mod serde_test {
     #[cfg(feature = "sync")]
     #[test]
     fn round_trip_map_key_enum() {
-        let interners = Jinterners::default();
+        let interners: Jinterners = Jinterners::default();
 
         let original: HashMap<SimpleEnum, u32> = [
             (SimpleEnum::First, 1),
@@ -1269,7 +1649,7 @@ mod serde_test {
 
     #[test]
     fn round_trip_mut_map_key_enum() {
-        let mut interners = Jinterners::default();
+        let mut interners: Jinterners = Jinterners::default();
 
         let original: HashMap<SimpleEnum, u32> = [
             (SimpleEnum::First, 1),
@@ -1300,7 +1680,7 @@ mod serde_test {
     #[cfg(feature = "sync")]
     #[test]
     fn round_trip_map_key_newtype() {
-        let interners = Jinterners::default();
+        let interners: Jinterners = Jinterners::default();
 
         let original: HashMap<NewString, u32> = [
             (NewString("First".into()), 1),
@@ -1329,7 +1709,7 @@ mod serde_test {
 
     #[test]
     fn round_trip_mut_map_key_newtype() {
-        let mut interners = Jinterners::default();
+        let mut interners: Jinterners = Jinterners::default();
 
         let original: HashMap<NewString, u32> = [
             (NewString("First".into()), 1),
@@ -1359,7 +1739,7 @@ mod serde_test {
 
     #[test]
     fn to_json_string() {
-        let mut interners = Jinterners::default();
+        let mut interners: Jinterners = Jinterners::default();
 
         let original = make_foo();
         let ivalue =

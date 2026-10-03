@@ -2,7 +2,8 @@ use super::{Float64, IValue, IValueImpl, InternedStrKey};
 use crate::{BufferPool, Jinterners};
 use alloc::format;
 use alloc::string::String;
-use blazinterner::{InternedSlice, InternedStr};
+use blazinterner::{DefaultBuildHasher, InternedSlice, InternedStr};
+use core::hash::BuildHasher;
 use ordered_float::OrderedFloat;
 use serde::de::{
     DeserializeSeed, EnumAccess, Error, Expected, MapAccess, SeqAccess, Unexpected, VariantAccess,
@@ -11,10 +12,10 @@ use serde::de::{
 use serde::{Deserializer, forward_to_deserialize_any};
 use serde_json::error::Error as JsonError;
 
-fn deserialize_array<'de, V>(
+fn deserialize_array<'de, V, H>(
     visitor: V,
-    array: InternedSlice<IValue>,
-    interners: &'de Jinterners,
+    array: InternedSlice<IValue<H>, H>,
+    interners: &'de Jinterners<H>,
 ) -> Result<V::Value, JsonError>
 where
     V: Visitor<'de>,
@@ -34,10 +35,10 @@ where
     }
 }
 
-fn deserialize_array_expected_len<'de, V>(
+fn deserialize_array_expected_len<'de, V, H>(
     visitor: V,
-    array: InternedSlice<IValue>,
-    interners: &'de Jinterners,
+    array: InternedSlice<IValue<H>, H>,
+    interners: &'de Jinterners<H>,
     expected_len: usize,
     make_error_msg: impl FnOnce() -> String,
 ) -> Result<V::Value, JsonError>
@@ -63,10 +64,10 @@ where
     }
 }
 
-fn deserialize_object<'de, V>(
+fn deserialize_object<'de, V, H>(
     visitor: V,
-    object: InternedSlice<(InternedStrKey, IValue)>,
-    interners: &'de Jinterners,
+    object: InternedSlice<(InternedStrKey<H>, IValue<H>), H>,
+    interners: &'de Jinterners<H>,
 ) -> Result<V::Value, JsonError>
 where
     V: Visitor<'de>,
@@ -86,12 +87,12 @@ where
     }
 }
 
-pub(super) struct ValueDeserializer<'a, 'b> {
-    pub value: &'a IValueImpl,
-    pub interners: &'b Jinterners,
+pub(super) struct ValueDeserializer<'a, 'b, H> {
+    pub value: &'a IValueImpl<H>,
+    pub interners: &'b Jinterners<H>,
 }
 
-impl<'de> ValueDeserializer<'_, 'de> {
+impl<'de, H> ValueDeserializer<'_, 'de, H> {
     fn invalid_type<E>(self, exp: &dyn Expected) -> E
     where
         E: Error,
@@ -136,7 +137,7 @@ impl<'de> ValueDeserializer<'_, 'de> {
     }
 }
 
-impl<'de> Deserializer<'de> for ValueDeserializer<'_, 'de> {
+impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
     type Error = JsonError;
 
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -431,19 +432,19 @@ impl<'de> Deserializer<'de> for ValueDeserializer<'_, 'de> {
     }
 }
 
-struct ArrayAccess<'a, 'b> {
-    array: &'a [IValue],
+struct ArrayAccess<'a, 'b, H> {
+    array: &'a [IValue<H>],
     index: usize,
-    interners: &'b Jinterners,
+    interners: &'b Jinterners<H>,
 }
 
-impl ArrayAccess<'_, '_> {
+impl<H> ArrayAccess<'_, '_, H> {
     fn is_fully_scanned(&self) -> bool {
         self.index == self.array.len()
     }
 }
 
-impl<'de> SeqAccess<'de> for ArrayAccess<'_, 'de> {
+impl<'de, H> SeqAccess<'de> for ArrayAccess<'_, 'de, H> {
     type Error = JsonError;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
@@ -468,19 +469,19 @@ impl<'de> SeqAccess<'de> for ArrayAccess<'_, 'de> {
     }
 }
 
-struct ObjectAccess<'a, 'b> {
-    object: &'a [(InternedStrKey, IValue)],
+struct ObjectAccess<'a, 'b, H> {
+    object: &'a [(InternedStrKey<H>, IValue<H>)],
     index: usize,
-    interners: &'b Jinterners,
+    interners: &'b Jinterners<H>,
 }
 
-impl ObjectAccess<'_, '_> {
+impl<H> ObjectAccess<'_, '_, H> {
     fn is_fully_scanned(&self) -> bool {
         self.index == self.object.len()
     }
 }
 
-impl<'de> MapAccess<'de> for ObjectAccess<'_, 'de> {
+impl<'de, H> MapAccess<'de> for ObjectAccess<'_, 'de, H> {
     type Error = JsonError;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
@@ -515,15 +516,15 @@ impl<'de> MapAccess<'de> for ObjectAccess<'_, 'de> {
     }
 }
 
-struct EnumAccessor<'a, 'b> {
-    variant: InternedStr,
-    value: Option<&'a IValueImpl>,
-    interners: &'b Jinterners,
+struct EnumAccessor<'a, 'b, H> {
+    variant: InternedStr<H>,
+    value: Option<&'a IValueImpl<H>>,
+    interners: &'b Jinterners<H>,
 }
 
-impl<'a, 'de> EnumAccess<'de> for EnumAccessor<'a, 'de> {
+impl<'a, 'de, H> EnumAccess<'de> for EnumAccessor<'a, 'de, H> {
     type Error = JsonError;
-    type Variant = VariantAccessor<'a, 'de>;
+    type Variant = VariantAccessor<'a, 'de, H>;
 
     fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
     where
@@ -545,12 +546,12 @@ impl<'a, 'de> EnumAccess<'de> for EnumAccessor<'a, 'de> {
     }
 }
 
-struct VariantAccessor<'a, 'b> {
-    value: Option<&'a IValueImpl>,
-    interners: &'b Jinterners,
+struct VariantAccessor<'a, 'b, H> {
+    value: Option<&'a IValueImpl<H>>,
+    interners: &'b Jinterners<H>,
 }
 
-impl<'de> VariantAccess<'de> for VariantAccessor<'_, 'de> {
+impl<'de, H> VariantAccess<'de> for VariantAccessor<'_, 'de, H> {
     type Error = JsonError;
 
     fn unit_variant(self) -> Result<(), Self::Error> {
@@ -631,12 +632,12 @@ impl<'de> VariantAccess<'de> for VariantAccessor<'_, 'de> {
     }
 }
 
-struct StringDeserializer<'b> {
-    istring: InternedStr,
-    interners: &'b Jinterners,
+struct StringDeserializer<'b, H> {
+    istring: InternedStr<H>,
+    interners: &'b Jinterners<H>,
 }
 
-impl<'de> StringDeserializer<'de> {
+impl<'de, H> StringDeserializer<'de, H> {
     fn invalid_type<E>(self, exp: &dyn Expected) -> E
     where
         E: Error,
@@ -648,7 +649,7 @@ impl<'de> StringDeserializer<'de> {
     }
 }
 
-impl<'de> Deserializer<'de> for StringDeserializer<'de> {
+impl<'de, H> Deserializer<'de> for StringDeserializer<'de, H> {
     type Error = JsonError;
 
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -908,7 +909,7 @@ impl<'de> Deserializer<'de> for StringDeserializer<'de> {
 ///
 /// ```
 /// # use jinterner::{BufferPool, IValue, InterningDeserializerMut, Jinterners};
-/// let mut interners = Jinterners::default();
+/// let mut interners: Jinterners = Jinterners::default();
 ///
 /// let json = r#"{"foo":42,"bar":"Hello world"}"#;
 /// let mut json_de = serde_json::Deserializer::from_str(json);
@@ -925,15 +926,15 @@ impl<'de> Deserializer<'de> for StringDeserializer<'de> {
 /// let expected = IValue::object_mut(&mut interners, expected_map.into_iter());
 /// assert_eq!(value, expected);
 /// ```
-pub struct InterningDeserializerMut<'a, D> {
-    interners: &'a mut Jinterners,
-    buffers: &'a mut BufferPool,
+pub struct InterningDeserializerMut<'a, D, H = DefaultBuildHasher> {
+    interners: &'a mut Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
     inner: D,
 }
 
-impl<'a, D> InterningDeserializerMut<'a, D> {
+impl<'a, D, H> InterningDeserializerMut<'a, D, H> {
     /// Binds a deserializer with the given [`Jinterners`] arena.
-    pub fn new(inner: D, interners: &'a mut Jinterners, buffers: &'a mut BufferPool) -> Self {
+    pub fn new(inner: D, interners: &'a mut Jinterners<H>, buffers: &'a mut BufferPool<H>) -> Self {
         Self {
             inner,
             interners,
@@ -942,26 +943,27 @@ impl<'a, D> InterningDeserializerMut<'a, D> {
     }
 }
 
-impl<'a, 'de, D> InterningDeserializerMut<'a, D>
+impl<'a, 'de, D, H> InterningDeserializerMut<'a, D, H>
 where
     D: Deserializer<'de>,
+    H: BuildHasher,
 {
     /// Deserialize an [`IValue`].
-    pub fn deserialize(self) -> Result<IValue, D::Error> {
+    pub fn deserialize(self) -> Result<IValue<H>, D::Error> {
         InterningDeserializerImplMut::new(self.inner, self.interners, self.buffers)
             .deserialize()
             .map(IValue)
     }
 }
 
-struct InterningDeserializerImplMut<'a, D> {
-    interners: &'a mut Jinterners,
-    buffers: &'a mut BufferPool,
+struct InterningDeserializerImplMut<'a, D, H> {
+    interners: &'a mut Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
     inner: D,
 }
 
-impl<'a, D> InterningDeserializerImplMut<'a, D> {
-    fn new(inner: D, interners: &'a mut Jinterners, buffers: &'a mut BufferPool) -> Self {
+impl<'a, D, H> InterningDeserializerImplMut<'a, D, H> {
+    fn new(inner: D, interners: &'a mut Jinterners<H>, buffers: &'a mut BufferPool<H>) -> Self {
         Self {
             inner,
             interners,
@@ -970,11 +972,12 @@ impl<'a, D> InterningDeserializerImplMut<'a, D> {
     }
 }
 
-impl<'a, 'de, D> InterningDeserializerImplMut<'a, D>
+impl<'a, 'de, D, H> InterningDeserializerImplMut<'a, D, H>
 where
     D: Deserializer<'de>,
+    H: BuildHasher,
 {
-    fn deserialize(self) -> Result<IValueImpl, D::Error> {
+    fn deserialize(self) -> Result<IValueImpl<H>, D::Error> {
         self.inner.deserialize_any(InterningVisitorMut {
             interners: self.interners,
             buffers: self.buffers,
@@ -982,13 +985,16 @@ where
     }
 }
 
-struct InterningVisitorMut<'a> {
-    interners: &'a mut Jinterners,
-    buffers: &'a mut BufferPool,
+struct InterningVisitorMut<'a, H> {
+    interners: &'a mut Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
 }
 
-impl<'a, 'de> Visitor<'de> for InterningVisitorMut<'a> {
-    type Value = IValueImpl;
+impl<'a, 'de, H> Visitor<'de> for InterningVisitorMut<'a, H>
+where
+    H: BuildHasher,
+{
+    type Value = IValueImpl<H>;
 
     fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
         formatter.write_str("a JSON value")
@@ -1119,13 +1125,16 @@ impl<'a, 'de> Visitor<'de> for InterningVisitorMut<'a> {
     }
 }
 
-struct InterningDeserializeSeedMut<'a> {
-    interners: &'a mut Jinterners,
-    buffers: &'a mut BufferPool,
+struct InterningDeserializeSeedMut<'a, H> {
+    interners: &'a mut Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
 }
 
-impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeSeedMut<'a> {
-    type Value = IValueImpl;
+impl<'a, 'de, H> DeserializeSeed<'de> for InterningDeserializeSeedMut<'a, H>
+where
+    H: BuildHasher,
+{
+    type Value = IValueImpl<H>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
@@ -1135,12 +1144,15 @@ impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeSeedMut<'a> {
     }
 }
 
-struct InterningDeserializeKeySeedMut<'a> {
-    interners: &'a mut Jinterners,
+struct InterningDeserializeKeySeedMut<'a, H> {
+    interners: &'a mut Jinterners<H>,
 }
 
-impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeKeySeedMut<'a> {
-    type Value = InternedStrKey;
+impl<'a, 'de, H> DeserializeSeed<'de> for InterningDeserializeKeySeedMut<'a, H>
+where
+    H: BuildHasher,
+{
+    type Value = InternedStrKey<H>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
@@ -1150,34 +1162,38 @@ impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeKeySeedMut<'a> {
     }
 }
 
-struct InterningKeyDeserializerMut<'a, D> {
-    interners: &'a mut Jinterners,
+struct InterningKeyDeserializerMut<'a, D, H> {
+    interners: &'a mut Jinterners<H>,
     inner: D,
 }
 
-impl<'a, D> InterningKeyDeserializerMut<'a, D> {
-    pub fn new(inner: D, interners: &'a mut Jinterners) -> Self {
+impl<'a, D, H> InterningKeyDeserializerMut<'a, D, H> {
+    pub fn new(inner: D, interners: &'a mut Jinterners<H>) -> Self {
         Self { inner, interners }
     }
 }
 
-impl<'a, 'de, D> InterningKeyDeserializerMut<'a, D>
+impl<'a, 'de, D, H> InterningKeyDeserializerMut<'a, D, H>
 where
     D: Deserializer<'de>,
+    H: BuildHasher,
 {
-    pub fn deserialize(self) -> Result<InternedStrKey, D::Error> {
+    pub fn deserialize(self) -> Result<InternedStrKey<H>, D::Error> {
         self.inner.deserialize_str(InterningKeyVisitorMut {
             interners: self.interners,
         })
     }
 }
 
-struct InterningKeyVisitorMut<'a> {
-    interners: &'a mut Jinterners,
+struct InterningKeyVisitorMut<'a, H> {
+    interners: &'a mut Jinterners<H>,
 }
 
-impl<'a, 'de> Visitor<'de> for InterningKeyVisitorMut<'a> {
-    type Value = InternedStrKey;
+impl<'a, 'de, H> Visitor<'de> for InterningKeyVisitorMut<'a, H>
+where
+    H: BuildHasher,
+{
+    type Value = InternedStrKey<H>;
 
     fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
         formatter.write_str("a string")
@@ -1221,7 +1237,7 @@ pub mod sync {
     ///
     /// ```
     /// # use jinterner::{BufferPool, IValue, InterningDeserializer, Jinterners};
-    /// let interners = Jinterners::default();
+    /// let interners: Jinterners = Jinterners::default();
     ///
     /// let json = r#"{"foo":42,"bar":"Hello world"}"#;
     /// let mut json_de = serde_json::Deserializer::from_str(json);
@@ -1241,15 +1257,15 @@ pub mod sync {
     /// );
     /// assert_eq!(value, expected);
     /// ```
-    pub struct InterningDeserializer<'a, D> {
-        interners: &'a Jinterners,
-        buffers: &'a mut BufferPool,
+    pub struct InterningDeserializer<'a, D, H = DefaultBuildHasher> {
+        interners: &'a Jinterners<H>,
+        buffers: &'a mut BufferPool<H>,
         inner: D,
     }
 
-    impl<'a, D> InterningDeserializer<'a, D> {
+    impl<'a, D, H> InterningDeserializer<'a, D, H> {
         /// Binds a deserializer with the given [`Jinterners`] arena.
-        pub fn new(inner: D, interners: &'a Jinterners, buffers: &'a mut BufferPool) -> Self {
+        pub fn new(inner: D, interners: &'a Jinterners<H>, buffers: &'a mut BufferPool<H>) -> Self {
             Self {
                 inner,
                 interners,
@@ -1258,26 +1274,27 @@ pub mod sync {
         }
     }
 
-    impl<'a, 'de, D> InterningDeserializer<'a, D>
+    impl<'a, 'de, D, H> InterningDeserializer<'a, D, H>
     where
         D: Deserializer<'de>,
+        H: BuildHasher,
     {
         /// Deserialize an [`IValue`].
-        pub fn deserialize(self) -> Result<IValue, D::Error> {
+        pub fn deserialize(self) -> Result<IValue<H>, D::Error> {
             InterningDeserializerImpl::new(self.inner, self.interners, self.buffers)
                 .deserialize()
                 .map(IValue)
         }
     }
 
-    struct InterningDeserializerImpl<'a, D> {
-        interners: &'a Jinterners,
-        buffers: &'a mut BufferPool,
+    struct InterningDeserializerImpl<'a, D, H> {
+        interners: &'a Jinterners<H>,
+        buffers: &'a mut BufferPool<H>,
         inner: D,
     }
 
-    impl<'a, D> InterningDeserializerImpl<'a, D> {
-        fn new(inner: D, interners: &'a Jinterners, buffers: &'a mut BufferPool) -> Self {
+    impl<'a, D, H> InterningDeserializerImpl<'a, D, H> {
+        fn new(inner: D, interners: &'a Jinterners<H>, buffers: &'a mut BufferPool<H>) -> Self {
             Self {
                 inner,
                 interners,
@@ -1286,11 +1303,12 @@ pub mod sync {
         }
     }
 
-    impl<'a, 'de, D> InterningDeserializerImpl<'a, D>
+    impl<'a, 'de, D, H> InterningDeserializerImpl<'a, D, H>
     where
         D: Deserializer<'de>,
+        H: BuildHasher,
     {
-        fn deserialize(self) -> Result<IValueImpl, D::Error> {
+        fn deserialize(self) -> Result<IValueImpl<H>, D::Error> {
             self.inner.deserialize_any(InterningVisitor {
                 interners: self.interners,
                 buffers: self.buffers,
@@ -1298,13 +1316,16 @@ pub mod sync {
         }
     }
 
-    struct InterningVisitor<'a> {
-        interners: &'a Jinterners,
-        buffers: &'a mut BufferPool,
+    struct InterningVisitor<'a, H> {
+        interners: &'a Jinterners<H>,
+        buffers: &'a mut BufferPool<H>,
     }
 
-    impl<'a, 'de> Visitor<'de> for InterningVisitor<'a> {
-        type Value = IValueImpl;
+    impl<'a, 'de, H> Visitor<'de> for InterningVisitor<'a, H>
+    where
+        H: BuildHasher,
+    {
+        type Value = IValueImpl<H>;
 
         fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
             formatter.write_str("a JSON value")
@@ -1435,13 +1456,16 @@ pub mod sync {
         }
     }
 
-    struct InterningDeserializeSeed<'a> {
-        interners: &'a Jinterners,
-        buffers: &'a mut BufferPool,
+    struct InterningDeserializeSeed<'a, H> {
+        interners: &'a Jinterners<H>,
+        buffers: &'a mut BufferPool<H>,
     }
 
-    impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeSeed<'a> {
-        type Value = IValueImpl;
+    impl<'a, 'de, H> DeserializeSeed<'de> for InterningDeserializeSeed<'a, H>
+    where
+        H: BuildHasher,
+    {
+        type Value = IValueImpl<H>;
 
         fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
         where
@@ -1451,12 +1475,15 @@ pub mod sync {
         }
     }
 
-    struct InterningDeserializeKeySeed<'a> {
-        interners: &'a Jinterners,
+    struct InterningDeserializeKeySeed<'a, H> {
+        interners: &'a Jinterners<H>,
     }
 
-    impl<'a, 'de> DeserializeSeed<'de> for InterningDeserializeKeySeed<'a> {
-        type Value = InternedStrKey;
+    impl<'a, 'de, H> DeserializeSeed<'de> for InterningDeserializeKeySeed<'a, H>
+    where
+        H: BuildHasher,
+    {
+        type Value = InternedStrKey<H>;
 
         fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
         where
@@ -1466,34 +1493,38 @@ pub mod sync {
         }
     }
 
-    struct InterningKeyDeserializer<'a, D> {
-        interners: &'a Jinterners,
+    struct InterningKeyDeserializer<'a, D, H> {
+        interners: &'a Jinterners<H>,
         inner: D,
     }
 
-    impl<'a, D> InterningKeyDeserializer<'a, D> {
-        pub fn new(inner: D, interners: &'a Jinterners) -> Self {
+    impl<'a, D, H> InterningKeyDeserializer<'a, D, H> {
+        pub fn new(inner: D, interners: &'a Jinterners<H>) -> Self {
             Self { inner, interners }
         }
     }
 
-    impl<'a, 'de, D> InterningKeyDeserializer<'a, D>
+    impl<'a, 'de, D, H> InterningKeyDeserializer<'a, D, H>
     where
         D: Deserializer<'de>,
+        H: BuildHasher,
     {
-        pub fn deserialize(self) -> Result<InternedStrKey, D::Error> {
+        pub fn deserialize(self) -> Result<InternedStrKey<H>, D::Error> {
             self.inner.deserialize_str(InterningKeyVisitor {
                 interners: self.interners,
             })
         }
     }
 
-    struct InterningKeyVisitor<'a> {
-        interners: &'a Jinterners,
+    struct InterningKeyVisitor<'a, H> {
+        interners: &'a Jinterners<H>,
     }
 
-    impl<'a, 'de> Visitor<'de> for InterningKeyVisitor<'a> {
-        type Value = InternedStrKey;
+    impl<'a, 'de, H> Visitor<'de> for InterningKeyVisitor<'a, H>
+    where
+        H: BuildHasher,
+    {
+        type Value = InternedStrKey<H>;
 
         fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
             formatter.write_str("a string")

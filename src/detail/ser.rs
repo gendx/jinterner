@@ -1,5 +1,6 @@
 use super::{BoundValue, Float64, IValue, IValueImpl, InternedStrKey};
 use crate::{Buffer, BufferPool, Jinterners};
+use core::hash::BuildHasher;
 use ordered_float::OrderedFloat;
 use serde::ser::{
     Error as _, Impossible, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
@@ -9,23 +10,26 @@ use serde::{Serialize, Serializer};
 use serde_json::error::Error;
 
 #[cfg(feature = "sync")]
-pub(super) struct ValueSerializer<'a> {
-    pub interners: &'a Jinterners,
-    pub buffers: &'a mut BufferPool,
+pub(super) struct ValueSerializer<'a, H> {
+    pub interners: &'a Jinterners<H>,
+    pub buffers: &'a mut BufferPool<H>,
 }
 
 #[cfg(feature = "sync")]
-impl<'a> Serializer for ValueSerializer<'a> {
-    type Ok = IValueImpl;
+impl<'a, H> Serializer for ValueSerializer<'a, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
-    type SerializeSeq = SerializeArray<'a>;
-    type SerializeTuple = SerializeArray<'a>;
-    type SerializeTupleStruct = SerializeArray<'a>;
-    type SerializeTupleVariant = SerializeArrayVariant<'a>;
-    type SerializeMap = SerializeObject<'a>;
-    type SerializeStruct = SerializeObject<'a>;
-    type SerializeStructVariant = SerializeObjectVariant<'a>;
+    type SerializeSeq = SerializeArray<'a, H>;
+    type SerializeTuple = SerializeArray<'a, H>;
+    type SerializeTupleStruct = SerializeArray<'a, H>;
+    type SerializeTupleVariant = SerializeArrayVariant<'a, H>;
+    type SerializeMap = SerializeObject<'a, H>;
+    type SerializeStruct = SerializeObject<'a, H>;
+    type SerializeStructVariant = SerializeObjectVariant<'a, H>;
 
     fn serialize_bool(self, value: bool) -> Result<Self::Ok, Self::Error> {
         Ok(IValueImpl::Bool(value))
@@ -226,15 +230,18 @@ impl<'a> Serializer for ValueSerializer<'a> {
 }
 
 #[cfg(feature = "sync")]
-pub(super) struct SerializeArray<'a> {
-    interners: &'a Jinterners,
-    buffers: &'a mut BufferPool,
-    array: Buffer<IValue>,
+pub(super) struct SerializeArray<'a, H> {
+    interners: &'a Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
+    array: Buffer<IValue<H>>,
 }
 
 #[cfg(feature = "sync")]
-impl SerializeSeq for SerializeArray<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeSeq for SerializeArray<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -256,8 +263,11 @@ impl SerializeSeq for SerializeArray<'_> {
 }
 
 #[cfg(feature = "sync")]
-impl SerializeTuple for SerializeArray<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeTuple for SerializeArray<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -273,8 +283,11 @@ impl SerializeTuple for SerializeArray<'_> {
 }
 
 #[cfg(feature = "sync")]
-impl SerializeTupleStruct for SerializeArray<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeTupleStruct for SerializeArray<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -290,16 +303,19 @@ impl SerializeTupleStruct for SerializeArray<'_> {
 }
 
 #[cfg(feature = "sync")]
-pub(super) struct SerializeArrayVariant<'a> {
-    interners: &'a Jinterners,
-    buffers: &'a mut BufferPool,
+pub(super) struct SerializeArrayVariant<'a, H> {
+    interners: &'a Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
     variant: &'static str,
-    array: Buffer<IValue>,
+    array: Buffer<IValue<H>>,
 }
 
 #[cfg(feature = "sync")]
-impl SerializeTupleVariant for SerializeArrayVariant<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeTupleVariant for SerializeArrayVariant<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -328,16 +344,19 @@ impl SerializeTupleVariant for SerializeArrayVariant<'_> {
 }
 
 #[cfg(feature = "sync")]
-pub(super) struct SerializeObject<'a> {
-    interners: &'a Jinterners,
-    buffers: &'a mut BufferPool,
-    object: Buffer<(InternedStrKey, IValue)>,
-    key: Option<InternedStrKey>,
+pub(super) struct SerializeObject<'a, H> {
+    interners: &'a Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
+    object: Buffer<(InternedStrKey<H>, IValue<H>)>,
+    key: Option<InternedStrKey<H>>,
 }
 
 #[cfg(feature = "sync")]
-impl SerializeMap for SerializeObject<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeMap for SerializeObject<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
@@ -389,8 +408,11 @@ impl SerializeMap for SerializeObject<'_> {
 }
 
 #[cfg(feature = "sync")]
-impl SerializeStruct for SerializeObject<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeStruct for SerializeObject<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
@@ -406,16 +428,19 @@ impl SerializeStruct for SerializeObject<'_> {
 }
 
 #[cfg(feature = "sync")]
-pub(super) struct SerializeObjectVariant<'a> {
-    interners: &'a Jinterners,
-    buffers: &'a mut BufferPool,
+pub(super) struct SerializeObjectVariant<'a, H> {
+    interners: &'a Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
     variant: &'static str,
-    object: Buffer<(InternedStrKey, IValue)>,
+    object: Buffer<(InternedStrKey<H>, IValue<H>)>,
 }
 
 #[cfg(feature = "sync")]
-impl SerializeStructVariant for SerializeObjectVariant<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeStructVariant for SerializeObjectVariant<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
@@ -449,12 +474,12 @@ impl SerializeStructVariant for SerializeObjectVariant<'_> {
 }
 
 #[cfg(feature = "sync")]
-struct ObjectKeySerializer<'a> {
-    interners: &'a Jinterners,
+struct ObjectKeySerializer<'a, H> {
+    interners: &'a Jinterners<H>,
 }
 
 #[cfg(feature = "sync")]
-impl ObjectKeySerializer<'_> {
+impl<H> ObjectKeySerializer<'_, H> {
     fn error() -> Error {
         Error::custom(
             "Object key must be a string, unit variant, or a newtype struct or Option::Some of those",
@@ -463,17 +488,20 @@ impl ObjectKeySerializer<'_> {
 }
 
 #[cfg(feature = "sync")]
-impl Serializer for ObjectKeySerializer<'_> {
-    type Ok = InternedStrKey;
+impl<H> Serializer for ObjectKeySerializer<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = InternedStrKey<H>;
     type Error = Error;
 
-    type SerializeSeq = Impossible<InternedStrKey, Error>;
-    type SerializeTuple = Impossible<InternedStrKey, Error>;
-    type SerializeTupleStruct = Impossible<InternedStrKey, Error>;
-    type SerializeTupleVariant = Impossible<InternedStrKey, Error>;
-    type SerializeMap = Impossible<InternedStrKey, Error>;
-    type SerializeStruct = Impossible<InternedStrKey, Error>;
-    type SerializeStructVariant = Impossible<InternedStrKey, Error>;
+    type SerializeSeq = Impossible<InternedStrKey<H>, Error>;
+    type SerializeTuple = Impossible<InternedStrKey<H>, Error>;
+    type SerializeTupleStruct = Impossible<InternedStrKey<H>, Error>;
+    type SerializeTupleVariant = Impossible<InternedStrKey<H>, Error>;
+    type SerializeMap = Impossible<InternedStrKey<H>, Error>;
+    type SerializeStruct = Impossible<InternedStrKey<H>, Error>;
+    type SerializeStructVariant = Impossible<InternedStrKey<H>, Error>;
 
     fn serialize_bool(self, _value: bool) -> Result<Self::Ok, Self::Error> {
         Err(Self::error())
@@ -634,22 +662,25 @@ impl Serializer for ObjectKeySerializer<'_> {
     }
 }
 
-pub(super) struct ValueSerializerMut<'a> {
-    pub interners: &'a mut Jinterners,
-    pub buffers: &'a mut BufferPool,
+pub(super) struct ValueSerializerMut<'a, H> {
+    pub interners: &'a mut Jinterners<H>,
+    pub buffers: &'a mut BufferPool<H>,
 }
 
-impl<'a> Serializer for ValueSerializerMut<'a> {
-    type Ok = IValueImpl;
+impl<'a, H> Serializer for ValueSerializerMut<'a, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
-    type SerializeSeq = SerializeArrayMut<'a>;
-    type SerializeTuple = SerializeArrayMut<'a>;
-    type SerializeTupleStruct = SerializeArrayMut<'a>;
-    type SerializeTupleVariant = SerializeArrayVariantMut<'a>;
-    type SerializeMap = SerializeObjectMut<'a>;
-    type SerializeStruct = SerializeObjectMut<'a>;
-    type SerializeStructVariant = SerializeObjectVariantMut<'a>;
+    type SerializeSeq = SerializeArrayMut<'a, H>;
+    type SerializeTuple = SerializeArrayMut<'a, H>;
+    type SerializeTupleStruct = SerializeArrayMut<'a, H>;
+    type SerializeTupleVariant = SerializeArrayVariantMut<'a, H>;
+    type SerializeMap = SerializeObjectMut<'a, H>;
+    type SerializeStruct = SerializeObjectMut<'a, H>;
+    type SerializeStructVariant = SerializeObjectVariantMut<'a, H>;
 
     fn serialize_bool(self, value: bool) -> Result<Self::Ok, Self::Error> {
         Ok(IValueImpl::Bool(value))
@@ -849,14 +880,17 @@ impl<'a> Serializer for ValueSerializerMut<'a> {
     }
 }
 
-pub(super) struct SerializeArrayMut<'a> {
-    interners: &'a mut Jinterners,
-    buffers: &'a mut BufferPool,
-    array: Buffer<IValue>,
+pub(super) struct SerializeArrayMut<'a, H> {
+    interners: &'a mut Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
+    array: Buffer<IValue<H>>,
 }
 
-impl SerializeSeq for SerializeArrayMut<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeSeq for SerializeArrayMut<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -877,8 +911,11 @@ impl SerializeSeq for SerializeArrayMut<'_> {
     }
 }
 
-impl SerializeTuple for SerializeArrayMut<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeTuple for SerializeArrayMut<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -893,8 +930,11 @@ impl SerializeTuple for SerializeArrayMut<'_> {
     }
 }
 
-impl SerializeTupleStruct for SerializeArrayMut<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeTupleStruct for SerializeArrayMut<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -909,15 +949,18 @@ impl SerializeTupleStruct for SerializeArrayMut<'_> {
     }
 }
 
-pub(super) struct SerializeArrayVariantMut<'a> {
-    interners: &'a mut Jinterners,
-    buffers: &'a mut BufferPool,
+pub(super) struct SerializeArrayVariantMut<'a, H> {
+    interners: &'a mut Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
     variant: &'static str,
-    array: Buffer<IValue>,
+    array: Buffer<IValue<H>>,
 }
 
-impl SerializeTupleVariant for SerializeArrayVariantMut<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeTupleVariant for SerializeArrayVariantMut<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -945,15 +988,18 @@ impl SerializeTupleVariant for SerializeArrayVariantMut<'_> {
     }
 }
 
-pub(super) struct SerializeObjectMut<'a> {
-    interners: &'a mut Jinterners,
-    buffers: &'a mut BufferPool,
-    object: Buffer<(InternedStrKey, IValue)>,
-    key: Option<InternedStrKey>,
+pub(super) struct SerializeObjectMut<'a, H> {
+    interners: &'a mut Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
+    object: Buffer<(InternedStrKey<H>, IValue<H>)>,
+    key: Option<InternedStrKey<H>>,
 }
 
-impl SerializeMap for SerializeObjectMut<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeMap for SerializeObjectMut<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
@@ -1004,8 +1050,11 @@ impl SerializeMap for SerializeObjectMut<'_> {
     }
 }
 
-impl SerializeStruct for SerializeObjectMut<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeStruct for SerializeObjectMut<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
@@ -1020,15 +1069,18 @@ impl SerializeStruct for SerializeObjectMut<'_> {
     }
 }
 
-pub(super) struct SerializeObjectVariantMut<'a> {
-    interners: &'a mut Jinterners,
-    buffers: &'a mut BufferPool,
+pub(super) struct SerializeObjectVariantMut<'a, H> {
+    interners: &'a mut Jinterners<H>,
+    buffers: &'a mut BufferPool<H>,
     variant: &'static str,
-    object: Buffer<(InternedStrKey, IValue)>,
+    object: Buffer<(InternedStrKey<H>, IValue<H>)>,
 }
 
-impl SerializeStructVariant for SerializeObjectVariantMut<'_> {
-    type Ok = IValueImpl;
+impl<H> SerializeStructVariant for SerializeObjectVariantMut<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = IValueImpl<H>;
     type Error = Error;
 
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
@@ -1061,11 +1113,11 @@ impl SerializeStructVariant for SerializeObjectVariantMut<'_> {
     }
 }
 
-struct ObjectKeySerializerMut<'a> {
-    interners: &'a mut Jinterners,
+struct ObjectKeySerializerMut<'a, H> {
+    interners: &'a mut Jinterners<H>,
 }
 
-impl ObjectKeySerializerMut<'_> {
+impl<H> ObjectKeySerializerMut<'_, H> {
     fn error() -> Error {
         Error::custom(
             "Object key must be a string, unit variant, or a newtype struct or Option::Some of those",
@@ -1073,17 +1125,20 @@ impl ObjectKeySerializerMut<'_> {
     }
 }
 
-impl Serializer for ObjectKeySerializerMut<'_> {
-    type Ok = InternedStrKey;
+impl<H> Serializer for ObjectKeySerializerMut<'_, H>
+where
+    H: BuildHasher,
+{
+    type Ok = InternedStrKey<H>;
     type Error = Error;
 
-    type SerializeSeq = Impossible<InternedStrKey, Error>;
-    type SerializeTuple = Impossible<InternedStrKey, Error>;
-    type SerializeTupleStruct = Impossible<InternedStrKey, Error>;
-    type SerializeTupleVariant = Impossible<InternedStrKey, Error>;
-    type SerializeMap = Impossible<InternedStrKey, Error>;
-    type SerializeStruct = Impossible<InternedStrKey, Error>;
-    type SerializeStructVariant = Impossible<InternedStrKey, Error>;
+    type SerializeSeq = Impossible<InternedStrKey<H>, Error>;
+    type SerializeTuple = Impossible<InternedStrKey<H>, Error>;
+    type SerializeTupleStruct = Impossible<InternedStrKey<H>, Error>;
+    type SerializeTupleVariant = Impossible<InternedStrKey<H>, Error>;
+    type SerializeMap = Impossible<InternedStrKey<H>, Error>;
+    type SerializeStruct = Impossible<InternedStrKey<H>, Error>;
+    type SerializeStructVariant = Impossible<InternedStrKey<H>, Error>;
 
     fn serialize_bool(self, _value: bool) -> Result<Self::Ok, Self::Error> {
         Err(Self::error())
@@ -1244,7 +1299,7 @@ impl Serializer for ObjectKeySerializerMut<'_> {
     }
 }
 
-impl<'a> Serialize for BoundValue<'a> {
+impl<'a, H> Serialize for BoundValue<'a, H> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,

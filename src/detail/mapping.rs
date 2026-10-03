@@ -43,13 +43,13 @@ impl Mapping {
         self.iobject.count_remapped()
     }
 
-    pub(crate) fn map_str_key(&self, s: InternedStrKey) -> InternedStrKey {
+    pub(crate) fn map_str_key<H>(&self, s: InternedStrKey<H>) -> InternedStrKey<H> {
         InternedStrKey(self.string.map_str(s.0))
     }
 
     /// Maps the given value from the source [`Jinterners`](crate::Jinterners)
     /// to the destination [`Jinterners`](crate::Jinterners) of this mapping.
-    pub fn map(&self, v: IValue) -> IValue {
+    pub fn map<H>(&self, v: IValue<H>) -> IValue<H> {
         IValue(match v.0 {
             IValueImpl::Null => IValueImpl::Null,
             IValueImpl::Bool(x) => IValueImpl::Bool(x),
@@ -83,13 +83,13 @@ impl MappingStrings {
         self.string.is_identity()
     }
 
-    pub fn map_str_key(&self, s: InternedStrKey) -> InternedStrKey {
+    pub fn map_str_key<H>(&self, s: InternedStrKey<H>) -> InternedStrKey<H> {
         InternedStrKey(self.string.map_str(s.0))
     }
 
     /// Maps the given value from the source [`Jinterners`](crate::Jinterners)
     /// to the destination [`Jinterners`](crate::Jinterners) of this mapping.
-    pub fn map(&self, v: IValue) -> IValue {
+    pub fn map<H>(&self, v: IValue<H>) -> IValue<H> {
         IValue(match v.0 {
             IValueImpl::Null => IValueImpl::Null,
             IValueImpl::Bool(x) => IValueImpl::Bool(x),
@@ -126,7 +126,7 @@ impl MappingNoStrings {
 
     /// Maps the given value from the source [`Jinterners`](crate::Jinterners)
     /// to the destination [`Jinterners`](crate::Jinterners) of this mapping.
-    pub fn map(&self, v: IValue) -> IValue {
+    pub fn map<H>(&self, v: IValue<H>) -> IValue<H> {
         IValue(match v.0 {
             IValueImpl::Null => IValueImpl::Null,
             IValueImpl::Bool(x) => IValueImpl::Bool(x),
