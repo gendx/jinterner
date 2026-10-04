@@ -21,18 +21,19 @@ mod util;
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
 pub use blazinterner::StdBuildHasher;
-use blazinterner::{ArenaSlice, ArenaStr, InternedSlice};
+use blazinterner::{Arena, ArenaSlice, ArenaStr, InternedSlice};
 pub use blazinterner::{DefaultBuildHasher, HashbrownBuildHasher};
 #[cfg(feature = "retain")]
-use blazinterner::{RetainSliceBuilder, RetainStrBuilder};
+use blazinterner::{RetainBuilder as RetainItemBuilder, RetainSliceBuilder, RetainStrBuilder};
 use core::fmt::Debug;
 use core::hash::BuildHasher;
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
+use detail::Float64;
 #[cfg(all(feature = "serde", feature = "sync"))]
 pub use detail::InterningDeserializer;
 pub use detail::mapping::Mapping;
-use detail::mapping::{MappingNoStrings, MappingStrings};
+use detail::mapping::{MappingNoScalars, MappingScalars};
 #[cfg(feature = "serde")]
 pub use detail::{BoundValue, InterningDeserializerMut};
 pub use detail::{IValue, InternedStrKey, MapRef, ValueRef};
@@ -48,6 +49,9 @@ pub use util::BufferPool;
 
 /// An arena to store interned JSON values.
 pub struct Jinterners<H = DefaultBuildHasher> {
+    uint64: Arena<u64, u64, H>,
+    int64: Arena<i64, i64, H>,
+    float64: Arena<Float64, Float64, H>,
     string: ArenaStr<H>,
     iarray: ArenaSlice<IValue<H>, H>,
     iobject: ArenaSlice<(InternedStrKey<H>, IValue<H>), H>,
@@ -59,6 +63,9 @@ where
 {
     fn default() -> Self {
         Self {
+            uint64: Default::default(),
+            int64: Default::default(),
+            float64: Default::default(),
             string: Default::default(),
             iarray: Default::default(),
             iobject: Default::default(),
@@ -69,6 +76,9 @@ where
 impl<H> Debug for Jinterners<H> {
     fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         fmt.debug_struct("Jinterners")
+            .field("uint64", &self.uint64)
+            .field("int64", &self.int64)
+            .field("float64", &self.float64)
             .field("string", &self.string)
             .field("iarray", &self.iarray)
             .field("iobject", &self.iobject)
@@ -82,6 +92,9 @@ where
 {
     fn clone(&self) -> Self {
         Self {
+            uint64: self.uint64.clone(),
+            int64: self.int64.clone(),
+            float64: self.float64.clone(),
             string: self.string.clone(),
             iarray: self.iarray.clone(),
             iobject: self.iobject.clone(),
@@ -91,7 +104,12 @@ where
 
 impl<H> PartialEq for Jinterners<H> {
     fn eq(&self, other: &Self) -> bool {
-        self.string == other.string && self.iarray == other.iarray && self.iobject == other.iobject
+        self.uint64 == other.uint64
+            && self.int64 == other.int64
+            && self.float64 == other.float64
+            && self.string == other.string
+            && self.iarray == other.iarray
+            && self.iobject == other.iobject
     }
 }
 
@@ -100,10 +118,16 @@ impl<H> Eq for Jinterners<H> {}
 #[cfg(feature = "get-size2")]
 impl<H> GetSize for Jinterners<H> {
     fn get_heap_size_with_tracker<Tr: GetSizeTracker>(&self, tracker: Tr) -> (usize, Tr) {
+        let (size_uint64, tracker) = GetSize::get_heap_size_with_tracker(&self.uint64, tracker);
+        let (size_int64, tracker) = GetSize::get_heap_size_with_tracker(&self.int64, tracker);
+        let (size_float64, tracker) = GetSize::get_heap_size_with_tracker(&self.float64, tracker);
         let (size_string, tracker) = GetSize::get_heap_size_with_tracker(&self.string, tracker);
         let (size_iarray, tracker) = GetSize::get_heap_size_with_tracker(&self.iarray, tracker);
         let (size_iobject, tracker) = GetSize::get_heap_size_with_tracker(&self.iobject, tracker);
-        (size_string + size_iarray + size_iobject, tracker)
+        (
+            size_uint64 + size_int64 + size_float64 + size_string + size_iarray + size_iobject,
+            tracker,
+        )
     }
 }
 
@@ -113,7 +137,15 @@ impl<H> Serialize for Jinterners<H> {
     where
         S: Serializer,
     {
-        (&self.string, &self.iarray, &self.iobject).serialize(serializer)
+        (
+            &self.uint64,
+            &self.int64,
+            &self.float64,
+            &self.string,
+            &self.iarray,
+            &self.iobject,
+        )
+            .serialize(serializer)
     }
 }
 
@@ -126,8 +158,12 @@ where
     where
         D: Deserializer<'de>,
     {
-        let (string, iarray, iobject) = Deserialize::deserialize(deserializer)?;
+        let (uint64, int64, float64, string, iarray, iobject) =
+            Deserialize::deserialize(deserializer)?;
         Ok(Self {
+            uint64,
+            int64,
+            float64,
             string,
             iarray,
             iobject,
@@ -137,6 +173,21 @@ where
 
 #[cfg(feature = "get-size2")]
 impl<H> Jinterners<H> {
+    /// Gets the size in bytes of the underlying [`u64`] arena.
+    pub fn get_size_u64s(&self) -> usize {
+        self.uint64.get_size()
+    }
+
+    /// Gets the size in bytes of the underlying [`i64`] arena.
+    pub fn get_size_i64s(&self) -> usize {
+        self.int64.get_size()
+    }
+
+    /// Gets the size in bytes of the underlying [`f64`] arena.
+    pub fn get_size_f64s(&self) -> usize {
+        self.float64.get_size()
+    }
+
     /// Gets the size in bytes of the underlying string arena.
     pub fn get_size_strings(&self) -> usize {
         self.string.get_size()
@@ -155,6 +206,24 @@ impl<H> Jinterners<H> {
 
 #[cfg(all(feature = "debug", feature = "std"))]
 impl<H> Jinterners<H> {
+    /// Prints a summary of the storage used by the underlying [`u64`] arena to
+    /// stdout.
+    pub fn print_summary_u64s(&self, prefix: &str, title: &str, total_bytes: usize) {
+        self.uint64.print_summary(prefix, title, total_bytes);
+    }
+
+    /// Prints a summary of the storage used by the underlying [`i64`] arena to
+    /// stdout.
+    pub fn print_summary_i64s(&self, prefix: &str, title: &str, total_bytes: usize) {
+        self.int64.print_summary(prefix, title, total_bytes);
+    }
+
+    /// Prints a summary of the storage used by the underlying [`f64`] arena to
+    /// stdout.
+    pub fn print_summary_f64s(&self, prefix: &str, title: &str, total_bytes: usize) {
+        self.float64.print_summary(prefix, title, total_bytes);
+    }
+
     /// Prints a summary of the storage used by the underlying string arena to
     /// stdout.
     pub fn print_summary_strings(&self, prefix: &str, title: &str, total_bytes: usize) {
@@ -178,6 +247,12 @@ impl<H> Jinterners<H> {
 ///
 /// This struct is returned by the [`stats()`](Jinterners::stats) method.
 pub struct Stats {
+    /// Number of [`u64`]s in the arena.
+    pub u64s: usize,
+    /// Number of [`i64`]s in the arena.
+    pub i64s: usize,
+    /// Number of [`f64`]s in the arena.
+    pub f64s: usize,
     /// Number of strings in the arena.
     pub strings: usize,
     /// Number of string bytes in the arena.
@@ -200,6 +275,9 @@ impl<H> Jinterners<H> {
     /// other threads are inserting values.
     pub fn stats(&self) -> Stats {
         Stats {
+            u64s: self.uint64.len(),
+            i64s: self.int64.len(),
+            f64s: self.float64.len(),
             strings: self.string.strings(),
             string_bytes: self.string.bytes(),
             arrays: self.iarray.slices(),
@@ -350,7 +428,7 @@ where
             return None;
         }
 
-        let mut optimized = self.optimize_once_strings().map(|(jinterners, mapping)| {
+        let mut optimized = self.optimize_once_scalars().map(|(jinterners, mapping)| {
             let mapping = mapping.promote(
                 jinterners.iarray.slices() as u32,
                 jinterners.iobject.slices() as u32,
@@ -368,24 +446,35 @@ where
                 None => self,
                 Some((ref jinterners, _)) => jinterners,
             };
-            let (jinterners, mapping) = match jinterners.optimize_once_no_strings() {
+            let (jinterners, mapping) = match jinterners.optimize_once_no_scalars() {
                 None => break,
                 Some((iarray, iobject, mapping_opt)) => match optimized {
                     None => {
-                        let string_iter = self.string.iter();
-                        let num_strings = string_iter.len();
-                        let mut string = ArenaStr::with_capacity(num_strings, self.string.bytes());
-                        for s in string_iter {
-                            string.push_mut(s);
-                        }
+                        let uint64 = self.uint64.clone();
+                        let int64 = self.int64.clone();
+                        let float64 = self.float64.clone();
+                        let string = self.string.clone();
+
+                        let num_uint64s = uint64.len();
+                        let num_int64s = int64.len();
+                        let num_float64s = float64.len();
+                        let num_strings = string.strings();
 
                         (
                             Jinterners {
+                                uint64,
+                                int64,
+                                float64,
                                 string,
                                 iarray,
                                 iobject,
                             },
-                            mapping_opt.promote(num_strings as u32),
+                            mapping_opt.promote(
+                                num_uint64s as u32,
+                                num_int64s as u32,
+                                num_float64s as u32,
+                                num_strings as u32,
+                            ),
                         )
                     }
                     Some((mut jinterners, mapping)) => {
@@ -411,11 +500,17 @@ where
     /// [`IValue`]s rooted in this [`Jinterners`] need to be converted using the
     /// resulting [`Mapping`] to be used in the destination [`Jinterners`].
     pub fn optimize_once(&self) -> Option<(Jinterners<H>, Mapping)> {
+        let u64_map = self.uint64.sort();
+        let i64_map = self.int64.sort();
+        let f64_map = self.float64.sort();
         let string_map = self.string.sort();
         let iarray_map = self.iarray.sort();
         let iobject_map = self.iobject.sort();
 
         let mapping = Mapping {
+            uint64: u64_map.forward,
+            int64: i64_map.forward,
+            float64: f64_map.forward,
             string: string_map.forward,
             iarray: iarray_map.forward,
             iobject: iobject_map.forward,
@@ -427,6 +522,9 @@ where
         let iobject_map_iter = iobject_map.reverse.iter();
 
         let mut jinterners = Jinterners {
+            uint64: self.uint64.map(&u64_map.reverse),
+            int64: self.int64.map(&i64_map.reverse),
+            float64: self.float64.map(&f64_map.reverse),
             string: self.string.map(&string_map.reverse),
             iarray: self
                 .iarray
@@ -450,9 +548,16 @@ where
         Some((jinterners, mapping))
     }
 
-    fn optimize_once_strings(&self) -> Option<(Jinterners<H>, MappingStrings)> {
+    fn optimize_once_scalars(&self) -> Option<(Jinterners<H>, MappingScalars)> {
+        let u64_map = self.uint64.sort();
+        let i64_map = self.int64.sort();
+        let f64_map = self.float64.sort();
         let string_map = self.string.sort();
-        let mapping = MappingStrings {
+
+        let mapping = MappingScalars {
+            uint64: u64_map.forward,
+            int64: i64_map.forward,
+            float64: f64_map.forward,
             string: string_map.forward,
         };
 
@@ -464,6 +569,9 @@ where
         let iobject_iter = self.iobject.iter();
 
         let mut jinterners = Jinterners {
+            uint64: self.uint64.map(&u64_map.reverse),
+            int64: self.int64.map(&i64_map.reverse),
+            float64: self.float64.map(&f64_map.reverse),
             string: self.string.map(&string_map.reverse),
             iarray: ArenaSlice::with_capacity(iarray_iter.len(), self.iarray.items()),
             iobject: ArenaSlice::with_capacity(iobject_iter.len(), self.iobject.items()),
@@ -492,17 +600,17 @@ where
     }
 
     #[expect(clippy::type_complexity)]
-    fn optimize_once_no_strings(
+    fn optimize_once_no_scalars(
         &self,
     ) -> Option<(
         ArenaSlice<IValue<H>, H>,
         ArenaSlice<(InternedStrKey<H>, IValue<H>), H>,
-        MappingNoStrings,
+        MappingNoScalars,
     )> {
         let iarray_map = self.iarray.sort();
         let iobject_map = self.iobject.sort();
 
-        let mapping = MappingNoStrings {
+        let mapping = MappingNoScalars {
             iarray: iarray_map.forward,
             iobject: iobject_map.forward,
         };
@@ -547,6 +655,9 @@ impl<H> Jinterners<H> {
     pub fn retain_builder(&self) -> RetainBuilder<'_, H> {
         RetainBuilder {
             jinterners: self,
+            u64s: self.uint64.retain_builder(),
+            i64s: self.int64.retain_builder(),
+            f64s: self.float64.retain_builder(),
             strings: self.string.retain_builder(),
             arrays: self.iarray.retain_builder(),
             objects: self.iobject.retain_builder(),
@@ -564,6 +675,9 @@ impl<H> Jinterners<H> {
 #[expect(clippy::type_complexity)]
 pub struct RetainBuilder<'a, H = DefaultBuildHasher> {
     jinterners: &'a Jinterners<H>,
+    u64s: RetainItemBuilder<u64, u64, H>,
+    i64s: RetainItemBuilder<i64, i64, H>,
+    f64s: RetainItemBuilder<Float64, Float64, H>,
     strings: RetainStrBuilder<H>,
     arrays: RetainSliceBuilder<IValue<H>, H>,
     objects: RetainSliceBuilder<(InternedStrKey<H>, IValue<H>), H>,
@@ -613,11 +727,17 @@ where
             }
         }
 
+        let u64_map = self.u64s.build();
+        let i64_map = self.i64s.build();
+        let f64_map = self.f64s.build();
         let string_map = self.strings.build();
         let iarray_map = self.arrays.build();
         let iobject_map = self.objects.build();
 
         let mapping = Mapping {
+            uint64: u64_map.forward,
+            int64: i64_map.forward,
+            float64: f64_map.forward,
             string: string_map.forward,
             iarray: iarray_map.forward,
             iobject: iobject_map.forward,
@@ -627,6 +747,9 @@ where
         }
 
         let jinterners = Jinterners {
+            uint64: self.jinterners.uint64.map(&u64_map.reverse),
+            int64: self.jinterners.int64.map(&i64_map.reverse),
+            float64: self.jinterners.float64.map(&f64_map.reverse),
             string: self.jinterners.string.map(&string_map.reverse),
             iarray: self
                 .jinterners

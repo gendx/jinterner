@@ -1,10 +1,9 @@
-use super::{Float64, IValue, IValueImpl, InternedStrKey};
+use super::{IValue, IValueImpl, InternedStrKey};
 use crate::{BufferPool, Jinterners};
 use alloc::format;
 use alloc::string::String;
 use blazinterner::{DefaultBuildHasher, InternedSlice, InternedStr};
 use core::hash::BuildHasher;
-use ordered_float::OrderedFloat;
 use serde::de::{
     DeserializeSeed, EnumAccess, Error, Expected, MapAccess, SeqAccess, Unexpected, VariantAccess,
     Visitor,
@@ -104,9 +103,11 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
         match self.value {
             IValueImpl::Null => Unexpected::Unit,
             IValueImpl::Bool(x) => Unexpected::Bool(*x),
-            IValueImpl::U64(x) => Unexpected::Unsigned(*x),
-            IValueImpl::I64(x) => Unexpected::Signed(*x),
-            IValueImpl::F64(Float64(OrderedFloat(x))) => Unexpected::Float(*x),
+            IValueImpl::U32(x) => Unexpected::Unsigned(*x as u64),
+            IValueImpl::I32(x) => Unexpected::Signed(*x as i64),
+            IValueImpl::U64(x) => Unexpected::Unsigned(self.interners.uint64.lookup(*x)),
+            IValueImpl::I64(x) => Unexpected::Signed(self.interners.int64.lookup(*x)),
+            IValueImpl::F64(x) => Unexpected::Float(self.interners.float64.lookup(*x).0.0),
             IValueImpl::String(s) => Unexpected::Str(self.interners.string.lookup(*s)),
             IValueImpl::Array(_) => Unexpected::Seq,
             IValueImpl::Object(_) => Unexpected::Map,
@@ -118,8 +119,10 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
         V: Visitor<'de>,
     {
         match self.value {
-            IValueImpl::U64(x) => visitor.visit_u64(*x),
-            IValueImpl::I64(x) => visitor.visit_i64(*x),
+            IValueImpl::U32(x) => visitor.visit_u32(*x),
+            IValueImpl::I32(x) => visitor.visit_i32(*x),
+            IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.lookup(*x)),
+            IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.lookup(*x)),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
@@ -129,9 +132,11 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
         V: Visitor<'de>,
     {
         match self.value {
-            IValueImpl::U64(x) => visitor.visit_u64(*x),
-            IValueImpl::I64(x) => visitor.visit_i64(*x),
-            IValueImpl::F64(Float64(OrderedFloat(x))) => visitor.visit_f64(*x),
+            IValueImpl::U32(x) => visitor.visit_u32(*x),
+            IValueImpl::I32(x) => visitor.visit_i32(*x),
+            IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.lookup(*x)),
+            IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.lookup(*x)),
+            IValueImpl::F64(x) => visitor.visit_f64(self.interners.float64.lookup(*x).0.0),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
@@ -147,9 +152,11 @@ impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
         match self.value {
             IValueImpl::Null => visitor.visit_unit(),
             IValueImpl::Bool(x) => visitor.visit_bool(*x),
-            IValueImpl::U64(x) => visitor.visit_u64(*x),
-            IValueImpl::I64(x) => visitor.visit_i64(*x),
-            IValueImpl::F64(Float64(OrderedFloat(x))) => visitor.visit_f64(*x),
+            IValueImpl::U32(x) => visitor.visit_u32(*x),
+            IValueImpl::I32(x) => visitor.visit_i32(*x),
+            IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.lookup(*x)),
+            IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.lookup(*x)),
+            IValueImpl::F64(x) => visitor.visit_f64(self.interners.float64.lookup(*x).0.0),
             IValueImpl::String(s) => visitor.visit_borrowed_str(self.interners.string.lookup(*s)),
             IValueImpl::Array(a) => deserialize_array(visitor, *a, self.interners),
             IValueImpl::Object(o) => deserialize_object(visitor, *o, self.interners),
@@ -920,7 +927,7 @@ impl<'de, H> Deserializer<'de> for StringDeserializer<'de, H> {
 /// json_de.end().unwrap();
 ///
 /// let expected_map = [
-///     ("foo", IValue::u64(42)),
+///     ("foo", IValue::u32(42)),
 ///     ("bar", IValue::string_mut(&mut interners, "Hello world")),
 /// ];
 /// let expected = IValue::object_mut(&mut interners, expected_map.into_iter());
@@ -1007,11 +1014,32 @@ where
         Ok(IValueImpl::Bool(v))
     }
 
+    fn visit_i8<E>(self, v: i8) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::I32(v.into()))
+    }
+
+    fn visit_i16<E>(self, v: i16) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::I32(v.into()))
+    }
+
+    fn visit_i32<E>(self, v: i32) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::I32(v))
+    }
+
     fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
     where
         E: Error,
     {
-        Ok(IValueImpl::I64(v))
+        Ok(IValueImpl::i64_mut(self.interners, v))
     }
 
     fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
@@ -1019,9 +1047,9 @@ where
         E: Error,
     {
         if let Ok(u) = u64::try_from(v) {
-            Ok(IValueImpl::U64(u))
+            Ok(IValueImpl::u64_mut(self.interners, u))
         } else if let Ok(i) = i64::try_from(v) {
-            Ok(IValueImpl::I64(i))
+            Ok(IValueImpl::i64_mut(self.interners, i))
         } else {
             Err(Error::invalid_value(
                 Unexpected::Other(&format!("an integer out of range ({v})")),
@@ -1030,11 +1058,32 @@ where
         }
     }
 
+    fn visit_u8<E>(self, v: u8) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::U32(v.into()))
+    }
+
+    fn visit_u16<E>(self, v: u16) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::U32(v.into()))
+    }
+
+    fn visit_u32<E>(self, v: u32) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(IValueImpl::U32(v))
+    }
+
     fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
     where
         E: Error,
     {
-        Ok(IValueImpl::U64(v))
+        Ok(IValueImpl::u64_mut(self.interners, v))
     }
 
     fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
@@ -1042,7 +1091,7 @@ where
         E: Error,
     {
         if let Ok(u) = u64::try_from(v) {
-            Ok(IValueImpl::U64(u))
+            Ok(IValueImpl::u64_mut(self.interners, u))
         } else {
             Err(Error::invalid_value(
                 Unexpected::Other(&format!("an integer out of range ({v})")),
@@ -1055,7 +1104,7 @@ where
     where
         E: Error,
     {
-        Ok(IValueImpl::F64(Float64(OrderedFloat(v))))
+        Ok(IValueImpl::f64_mut(self.interners, v))
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
@@ -1250,7 +1299,7 @@ pub mod sync {
     /// let expected = IValue::object(
     ///     &interners,
     ///     [
-    ///         ("foo", IValue::u64(42)),
+    ///         ("foo", IValue::u32(42)),
     ///         ("bar", IValue::string(&interners, "Hello world")),
     ///     ]
     ///     .into_iter(),
@@ -1338,11 +1387,32 @@ pub mod sync {
             Ok(IValueImpl::Bool(v))
         }
 
+        fn visit_i8<E>(self, v: i8) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(IValueImpl::I32(v.into()))
+        }
+
+        fn visit_i16<E>(self, v: i16) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(IValueImpl::I32(v.into()))
+        }
+
+        fn visit_i32<E>(self, v: i32) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(IValueImpl::I32(v))
+        }
+
         fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
         where
             E: Error,
         {
-            Ok(IValueImpl::I64(v))
+            Ok(IValueImpl::i64(self.interners, v))
         }
 
         fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
@@ -1350,9 +1420,9 @@ pub mod sync {
             E: Error,
         {
             if let Ok(u) = u64::try_from(v) {
-                Ok(IValueImpl::U64(u))
+                Ok(IValueImpl::u64(self.interners, u))
             } else if let Ok(i) = i64::try_from(v) {
-                Ok(IValueImpl::I64(i))
+                Ok(IValueImpl::i64(self.interners, i))
             } else {
                 Err(Error::invalid_value(
                     Unexpected::Other(&format!("an integer out of range ({v})")),
@@ -1361,11 +1431,32 @@ pub mod sync {
             }
         }
 
+        fn visit_u8<E>(self, v: u8) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(IValueImpl::U32(v.into()))
+        }
+
+        fn visit_u16<E>(self, v: u16) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(IValueImpl::U32(v.into()))
+        }
+
+        fn visit_u32<E>(self, v: u32) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(IValueImpl::U32(v))
+        }
+
         fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
         where
             E: Error,
         {
-            Ok(IValueImpl::U64(v))
+            Ok(IValueImpl::u64(self.interners, v))
         }
 
         fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
@@ -1373,7 +1464,7 @@ pub mod sync {
             E: Error,
         {
             if let Ok(u) = u64::try_from(v) {
-                Ok(IValueImpl::U64(u))
+                Ok(IValueImpl::u64(self.interners, u))
             } else {
                 Err(Error::invalid_value(
                     Unexpected::Other(&format!("an integer out of range ({v})")),
@@ -1386,7 +1477,7 @@ pub mod sync {
         where
             E: Error,
         {
-            Ok(IValueImpl::F64(Float64(OrderedFloat(v))))
+            Ok(IValueImpl::f64(self.interners, v))
         }
 
         fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>

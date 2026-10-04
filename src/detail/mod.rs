@@ -14,7 +14,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 #[cfg(feature = "serde")]
 use alloc::vec::Vec;
-use blazinterner::{ArenaStr, DefaultBuildHasher, InternedSlice, InternedStr};
+use blazinterner::{ArenaStr, DefaultBuildHasher, Interned, InternedSlice, InternedStr};
 use core::cmp::Ordering;
 use core::fmt::Debug;
 use core::hash::{BuildHasher, Hash, Hasher};
@@ -236,18 +236,13 @@ impl<H> IValue<H> {
     }
 
     /// Interns an integer JSON value.
-    pub fn u64(x: u64) -> Self {
-        Self(IValueImpl::U64(x))
+    pub fn u32(x: u32) -> Self {
+        Self(IValueImpl::U32(x))
     }
 
     /// Interns an integer JSON value.
-    pub fn i64(x: i64) -> Self {
-        Self(IValueImpl::I64(x))
-    }
-
-    /// Interns a floating-point JSON value.
-    pub fn f64(x: f64) -> Self {
-        Self(IValueImpl::F64(Float64(OrderedFloat(x))))
+    pub fn i32(x: i32) -> Self {
+        Self(IValueImpl::I32(x))
     }
 }
 
@@ -255,6 +250,63 @@ impl<H> IValue<H>
 where
     H: BuildHasher,
 {
+    /// Interns an integer JSON value.
+    ///
+    /// See also [`u64_mut()`](Self::u64_mut), which is more efficient if you
+    /// hold a mutable reference to the [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn u64(interners: &Jinterners<H>, x: u64) -> Self {
+        Self(IValueImpl::u64(interners, x))
+    }
+
+    /// Interns an integer JSON value.
+    ///
+    /// Contrary to [`u64()`](Self::u64), no locks are held internally because
+    /// this function already takes an exclusive mutable reference to the
+    /// [`Jinterners`] arena.
+    pub fn u64_mut(interners: &mut Jinterners<H>, x: u64) -> Self {
+        Self(IValueImpl::u64_mut(interners, x))
+    }
+
+    /// Interns an integer JSON value.
+    ///
+    /// See also [`i64_mut()`](Self::i64_mut), which is more efficient if you
+    /// hold a mutable reference to the [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn i64(interners: &Jinterners<H>, x: i64) -> Self {
+        Self(IValueImpl::i64(interners, x))
+    }
+
+    /// Interns an integer JSON value.
+    ///
+    /// Contrary to [`i64()`](Self::i64), no locks are held internally because
+    /// this function already takes an exclusive mutable reference to the
+    /// [`Jinterners`] arena.
+    pub fn i64_mut(interners: &mut Jinterners<H>, x: i64) -> Self {
+        Self(IValueImpl::i64_mut(interners, x))
+    }
+
+    /// Interns a floating-point JSON value.
+    ///
+    /// See also [`f64_mut()`](Self::f64_mut), which is more efficient if you
+    /// hold a mutable reference to the [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn f64(interners: &Jinterners<H>, x: f64) -> Self {
+        Self(IValueImpl::f64(interners, x))
+    }
+
+    /// Interns a floating-point JSON value.
+    ///
+    /// Contrary to [`f64()`](Self::f64), no locks are held internally because
+    /// this function already takes an exclusive mutable reference to the
+    /// [`Jinterners`] arena.
+    pub fn f64_mut(interners: &mut Jinterners<H>, x: f64) -> Self {
+        Self(IValueImpl::f64_mut(interners, x))
+    }
+
     /// Interns a string JSON value.
     ///
     /// See also [`string_mut()`](Self::string_mut), which is more efficient if
@@ -637,11 +689,12 @@ impl<H> IValue<H> {
     #[cfg(feature = "retain")]
     pub(crate) fn retain(&self, builder: &mut RetainBuilder<H>) -> bool {
         match self.0 {
-            IValueImpl::Null
-            | IValueImpl::Bool(_)
-            | IValueImpl::U64(_)
-            | IValueImpl::I64(_)
-            | IValueImpl::F64(_) => false,
+            IValueImpl::Null | IValueImpl::Bool(_) | IValueImpl::U32(_) | IValueImpl::I32(_) => {
+                false
+            }
+            IValueImpl::U64(x) => builder.u64s.insert(x),
+            IValueImpl::I64(x) => builder.i64s.insert(x),
+            IValueImpl::F64(x) => builder.f64s.insert(x),
             IValueImpl::String(s) => builder.strings.insert(s),
             IValueImpl::Array(a) => {
                 if builder.arrays.insert(a) {
@@ -665,7 +718,7 @@ impl<H> IValue<H> {
 
 #[derive(Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-struct Float64(OrderedFloat<f64>);
+pub(crate) struct Float64(OrderedFloat<f64>);
 
 impl Debug for Float64 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -684,9 +737,11 @@ enum IValueImpl<H> {
     #[default]
     Null,
     Bool(bool),
-    U64(u64),
-    I64(i64),
-    F64(Float64),
+    U32(u32),
+    I32(i32),
+    U64(Interned<u64, u64, H>),
+    I64(Interned<i64, i64, H>),
+    F64(Interned<Float64, Float64, H>),
     String(InternedStr<H>),
     Array(InternedSlice<IValue<H>, H>),
     Object(InternedSlice<(InternedStrKey<H>, IValue<H>), H>),
@@ -697,11 +752,11 @@ impl<H> Debug for IValueImpl<H> {
         match self {
             IValueImpl::Null => f.debug_tuple("IValue::Null").finish(),
             IValueImpl::Bool(x) => f.debug_tuple("IValue::Bool").field(x).finish(),
+            IValueImpl::U32(x) => f.debug_tuple("IValue::U32").field(x).finish(),
+            IValueImpl::I32(x) => f.debug_tuple("IValue::I32").field(x).finish(),
             IValueImpl::U64(x) => f.debug_tuple("IValue::U64").field(x).finish(),
             IValueImpl::I64(x) => f.debug_tuple("IValue::I64").field(x).finish(),
-            IValueImpl::F64(Float64(OrderedFloat(x))) => {
-                f.debug_tuple("IValue::F64").field(x).finish()
-            }
+            IValueImpl::F64(x) => f.debug_tuple("IValue::F64").field(x).finish(),
             IValueImpl::String(s) => f.debug_tuple("IValue::String").field(s).finish(),
             IValueImpl::Array(a) => f.debug_tuple("IValue::Array").field(a).finish(),
             IValueImpl::Object(o) => f.debug_tuple("IValue::Object").field(o).finish(),
@@ -722,6 +777,8 @@ impl<H> PartialEq for IValueImpl<H> {
         match (self, other) {
             (IValueImpl::Null, IValueImpl::Null) => true,
             (IValueImpl::Bool(a), IValueImpl::Bool(b)) => a == b,
+            (IValueImpl::U32(a), IValueImpl::U32(b)) => a == b,
+            (IValueImpl::I32(a), IValueImpl::I32(b)) => a == b,
             (IValueImpl::U64(a), IValueImpl::U64(b)) => a == b,
             (IValueImpl::I64(a), IValueImpl::I64(b)) => a == b,
             (IValueImpl::F64(a), IValueImpl::F64(b)) => a == b,
@@ -749,6 +806,8 @@ impl<H> Ord for IValueImpl<H> {
             Ordering::Equal => match (self, other) {
                 (IValueImpl::Null, IValueImpl::Null) => Ordering::Equal,
                 (IValueImpl::Bool(a), IValueImpl::Bool(b)) => a.cmp(b),
+                (IValueImpl::U32(a), IValueImpl::U32(b)) => a.cmp(b),
+                (IValueImpl::I32(a), IValueImpl::I32(b)) => a.cmp(b),
                 (IValueImpl::U64(a), IValueImpl::U64(b)) => a.cmp(b),
                 (IValueImpl::I64(a), IValueImpl::I64(b)) => a.cmp(b),
                 (IValueImpl::F64(a), IValueImpl::F64(b)) => a.cmp(b),
@@ -770,6 +829,8 @@ impl<H> Hash for IValueImpl<H> {
         match self {
             IValueImpl::Null => (),
             IValueImpl::Bool(x) => x.hash(state),
+            IValueImpl::U32(x) => x.hash(state),
+            IValueImpl::I32(x) => x.hash(state),
             IValueImpl::U64(x) => x.hash(state),
             IValueImpl::I64(x) => x.hash(state),
             IValueImpl::F64(x) => x.hash(state),
@@ -795,17 +856,19 @@ impl<H> Serialize for IValueImpl<H> {
         match self {
             IValueImpl::Null => serializer.serialize_unit_variant("IValueImpl", 0, "Null"),
             IValueImpl::Bool(x) => serializer.serialize_newtype_variant("IValueImpl", 1, "Bool", x),
-            IValueImpl::U64(x) => serializer.serialize_newtype_variant("IValueImpl", 2, "U64", x),
-            IValueImpl::I64(x) => serializer.serialize_newtype_variant("IValueImpl", 3, "I64", x),
-            IValueImpl::F64(x) => serializer.serialize_newtype_variant("IValueImpl", 4, "F64", x),
+            IValueImpl::U32(x) => serializer.serialize_newtype_variant("IValueImpl", 2, "U32", x),
+            IValueImpl::I32(x) => serializer.serialize_newtype_variant("IValueImpl", 3, "I32", x),
+            IValueImpl::U64(x) => serializer.serialize_newtype_variant("IValueImpl", 4, "U64", x),
+            IValueImpl::I64(x) => serializer.serialize_newtype_variant("IValueImpl", 5, "I64", x),
+            IValueImpl::F64(x) => serializer.serialize_newtype_variant("IValueImpl", 6, "F64", x),
             IValueImpl::String(x) => {
-                serializer.serialize_newtype_variant("IValueImpl", 5, "String", x)
+                serializer.serialize_newtype_variant("IValueImpl", 7, "String", x)
             }
             IValueImpl::Array(x) => {
-                serializer.serialize_newtype_variant("IValueImpl", 6, "Array", x)
+                serializer.serialize_newtype_variant("IValueImpl", 8, "Array", x)
             }
             IValueImpl::Object(x) => {
-                serializer.serialize_newtype_variant("IValueImpl", 7, "Object", x)
+                serializer.serialize_newtype_variant("IValueImpl", 9, "Object", x)
             }
         }
     }
@@ -820,7 +883,7 @@ impl<'de, H> Deserialize<'de> for IValueImpl<H> {
         deserializer.deserialize_enum(
             "IValueImpl",
             &[
-                "Null", "Bool", "U64", "I64", "F64", "String", "Array", "Object",
+                "Null", "Bool", "U32", "I32", "U64", "I64", "F64", "String", "Array", "Object",
             ],
             IValueImplVisitor(PhantomData),
         )
@@ -846,6 +909,8 @@ impl<'de, H> Visitor<'de> for IValueImplVisitor<H> {
         enum IValueImplVariant {
             Null,
             Bool,
+            U32,
+            I32,
             U64,
             I64,
             F64,
@@ -861,6 +926,8 @@ impl<'de, H> Visitor<'de> for IValueImplVisitor<H> {
                 IValueImpl::Null
             }
             IValueImplVariant::Bool => IValueImpl::Bool(data.newtype_variant()?),
+            IValueImplVariant::U32 => IValueImpl::U32(data.newtype_variant()?),
+            IValueImplVariant::I32 => IValueImpl::I32(data.newtype_variant()?),
             IValueImplVariant::U64 => IValueImpl::U64(data.newtype_variant()?),
             IValueImplVariant::I64 => IValueImpl::I64(data.newtype_variant()?),
             IValueImplVariant::F64 => IValueImpl::F64(data.newtype_variant()?),
@@ -877,12 +944,14 @@ impl<H> IValueImpl<H> {
         match self {
             IValueImpl::Null => 0,
             IValueImpl::Bool(_) => 1,
-            IValueImpl::U64(_) => 2,
-            IValueImpl::I64(_) => 3,
-            IValueImpl::F64(_) => 4,
-            IValueImpl::String(_) => 5,
-            IValueImpl::Array(_) => 6,
-            IValueImpl::Object(_) => 7,
+            IValueImpl::U32(_) => 2,
+            IValueImpl::I32(_) => 3,
+            IValueImpl::U64(_) => 4,
+            IValueImpl::I64(_) => 5,
+            IValueImpl::F64(_) => 6,
+            IValueImpl::String(_) => 7,
+            IValueImpl::Array(_) => 8,
+            IValueImpl::Object(_) => 9,
         }
     }
 }
@@ -892,17 +961,56 @@ where
     H: BuildHasher,
 {
     #[cfg(feature = "sync")]
+    fn u64(interners: &Jinterners<H>, x: u64) -> Self {
+        match x.try_into() {
+            Ok(x32) => IValueImpl::U32(x32),
+            Err(_) => IValueImpl::U64(interners.uint64.intern(x)),
+        }
+    }
+
+    fn u64_mut(interners: &mut Jinterners<H>, x: u64) -> Self {
+        match x.try_into() {
+            Ok(x32) => IValueImpl::U32(x32),
+            Err(_) => IValueImpl::U64(interners.uint64.intern_mut(x)),
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    fn i64(interners: &Jinterners<H>, x: i64) -> Self {
+        match x.try_into() {
+            Ok(x32) => IValueImpl::I32(x32),
+            Err(_) => IValueImpl::I64(interners.int64.intern(x)),
+        }
+    }
+
+    fn i64_mut(interners: &mut Jinterners<H>, x: i64) -> Self {
+        match x.try_into() {
+            Ok(x32) => IValueImpl::I32(x32),
+            Err(_) => IValueImpl::I64(interners.int64.intern_mut(x)),
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    fn f64(interners: &Jinterners<H>, x: f64) -> Self {
+        IValueImpl::F64(interners.float64.intern(Float64(OrderedFloat(x))))
+    }
+
+    fn f64_mut(interners: &mut Jinterners<H>, x: f64) -> Self {
+        IValueImpl::F64(interners.float64.intern_mut(Float64(OrderedFloat(x))))
+    }
+
+    #[cfg(feature = "sync")]
     fn from(interners: &Jinterners<H>, source: Value) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
             Value::Bool(x) => IValueImpl::Bool(x),
             Value::Number(x) => {
                 if x.is_u64() {
-                    IValueImpl::U64(x.as_u64().unwrap())
+                    IValueImpl::u64(interners, x.as_u64().unwrap())
                 } else if x.is_i64() {
-                    IValueImpl::I64(x.as_i64().unwrap())
+                    IValueImpl::i64(interners, x.as_i64().unwrap())
                 } else {
-                    IValueImpl::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
+                    IValueImpl::f64(interners, x.as_f64().unwrap())
                 }
             }
             Value::String(s) => IValueImpl::String(interners.string.intern(&s)),
@@ -936,11 +1044,11 @@ where
             Value::Bool(x) => IValueImpl::Bool(*x),
             Value::Number(x) => {
                 if x.is_u64() {
-                    IValueImpl::U64(x.as_u64().unwrap())
+                    IValueImpl::u64(interners, x.as_u64().unwrap())
                 } else if x.is_i64() {
-                    IValueImpl::I64(x.as_i64().unwrap())
+                    IValueImpl::i64(interners, x.as_i64().unwrap())
                 } else {
-                    IValueImpl::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
+                    IValueImpl::f64(interners, x.as_f64().unwrap())
                 }
             }
             Value::String(s) => IValueImpl::String(interners.string.intern(s.as_str())),
@@ -973,11 +1081,11 @@ where
             Value::Bool(x) => IValueImpl::Bool(x),
             Value::Number(x) => {
                 if x.is_u64() {
-                    IValueImpl::U64(x.as_u64().unwrap())
+                    IValueImpl::u64_mut(interners, x.as_u64().unwrap())
                 } else if x.is_i64() {
-                    IValueImpl::I64(x.as_i64().unwrap())
+                    IValueImpl::i64_mut(interners, x.as_i64().unwrap())
                 } else {
-                    IValueImpl::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
+                    IValueImpl::f64_mut(interners, x.as_f64().unwrap())
                 }
             }
             Value::String(s) => IValueImpl::String(interners.string.intern_mut(&s)),
@@ -1010,11 +1118,11 @@ where
             Value::Bool(x) => IValueImpl::Bool(*x),
             Value::Number(x) => {
                 if x.is_u64() {
-                    IValueImpl::U64(x.as_u64().unwrap())
+                    IValueImpl::u64_mut(interners, x.as_u64().unwrap())
                 } else if x.is_i64() {
-                    IValueImpl::I64(x.as_i64().unwrap())
+                    IValueImpl::i64_mut(interners, x.as_i64().unwrap())
                 } else {
-                    IValueImpl::F64(Float64(OrderedFloat(x.as_f64().unwrap())))
+                    IValueImpl::f64_mut(interners, x.as_f64().unwrap())
                 }
             }
             Value::String(s) => IValueImpl::String(interners.string.intern_mut(s.as_str())),
@@ -1045,10 +1153,19 @@ where
         match self {
             IValueImpl::Null => Value::Null,
             IValueImpl::Bool(x) => Value::Bool(*x),
-            IValueImpl::U64(x) => Value::Number(Number::from_u128(*x as u128).unwrap()),
-            IValueImpl::I64(x) => Value::Number(Number::from_i128(*x as i128).unwrap()),
-            IValueImpl::F64(Float64(OrderedFloat(x))) => {
-                Value::Number(Number::from_f64(*x).unwrap())
+            IValueImpl::U32(x) => Value::Number(Number::from_u128(*x as u128).unwrap()),
+            IValueImpl::I32(x) => Value::Number(Number::from_i128(*x as i128).unwrap()),
+            IValueImpl::U64(x) => {
+                let x = interners.uint64.lookup(*x);
+                Value::Number(Number::from_u128(x as u128).unwrap())
+            }
+            IValueImpl::I64(x) => {
+                let x = interners.int64.lookup(*x);
+                Value::Number(Number::from_i128(x as i128).unwrap())
+            }
+            IValueImpl::F64(x) => {
+                let Float64(OrderedFloat(x)) = interners.float64.lookup(*x);
+                Value::Number(Number::from_f64(x).unwrap())
             }
             IValueImpl::String(s) => Value::String(interners.string.lookup(*s).into()),
             IValueImpl::Array(a) => Value::Array(
@@ -1074,9 +1191,11 @@ where
         match self {
             IValueImpl::Null => ValueRef::Null,
             IValueImpl::Bool(x) => ValueRef::Bool(*x),
-            IValueImpl::U64(x) => ValueRef::U64(*x),
-            IValueImpl::I64(x) => ValueRef::I64(*x),
-            IValueImpl::F64(Float64(OrderedFloat(x))) => ValueRef::F64(*x),
+            IValueImpl::U32(x) => ValueRef::U64(*x as u64),
+            IValueImpl::I32(x) => ValueRef::I64(*x as i64),
+            IValueImpl::U64(x) => ValueRef::U64(interners.uint64.lookup(*x)),
+            IValueImpl::I64(x) => ValueRef::I64(interners.int64.lookup(*x)),
+            IValueImpl::F64(x) => ValueRef::F64(interners.float64.lookup(*x).0.0),
             IValueImpl::String(s) => ValueRef::String(interners.string.lookup(*s)),
             IValueImpl::Array(a) => ValueRef::Array(interners.iarray.lookup(*a)),
             IValueImpl::Object(o) => ValueRef::Object(MapRef {
@@ -1173,8 +1292,11 @@ mod delta {
         where
             S: Serializer,
         {
-            let mut tuple = serializer.serialize_tuple(3)?;
+            let mut tuple = serializer.serialize_tuple(6)?;
 
+            tuple.serialize_element(&self.inner.uint64)?;
+            tuple.serialize_element(&self.inner.int64)?;
+            tuple.serialize_element(&self.inner.float64)?;
             tuple.serialize_element(&self.inner.string)?;
 
             let iarray: RawDeltaEncoding<_, IArrayAccumulator<H>> =
@@ -1197,7 +1319,7 @@ mod delta {
         where
             D: Deserializer<'de>,
         {
-            deserializer.deserialize_tuple(3, DeltaJinternersVisitor(PhantomData))
+            deserializer.deserialize_tuple(6, DeltaJinternersVisitor(PhantomData))
         }
     }
 
@@ -1210,28 +1332,42 @@ mod delta {
         type Value = DeltaEncoding<Jinterners<H>>;
 
         fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-            formatter.write_str("a tuple with 3 elements")
+            formatter.write_str("a tuple with 6 elements")
         }
 
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
         where
             A: SeqAccess<'de>,
         {
-            let string = seq
+            let uint64 = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(0, &self))?;
-            let iarray: RawDeltaEncoding<ArenaSlice<IValue<H>, H>, IArrayAccumulator<H>> = seq
+            let int64 = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+            let float64 = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::invalid_length(2, &self))?;
+            let string = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::invalid_length(3, &self))?;
+
+            let iarray: RawDeltaEncoding<ArenaSlice<IValue<H>, H>, IArrayAccumulator<H>> = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::invalid_length(4, &self))?;
+
             #[expect(clippy::type_complexity)]
             let iobject: RawDeltaEncoding<
                 ArenaSlice<(InternedStrKey<H>, IValue<H>), H>,
                 IObjectAccumulator<H>,
             > = seq
                 .next_element()?
-                .ok_or_else(|| A::Error::invalid_length(2, &self))?;
+                .ok_or_else(|| A::Error::invalid_length(5, &self))?;
 
             Ok(DeltaEncoding::new(Jinterners {
+                uint64,
+                int64,
+                float64,
                 string,
                 iarray: iarray.into_inner(),
                 iobject: iobject.into_inner(),
@@ -1245,9 +1381,11 @@ mod delta {
     pub enum IValueDelta {
         Null,
         Bool(bool),
-        U64(i64),
-        I64(i64),
-        F64(f64),
+        U32(i32),
+        I32(i32),
+        U64(i32),
+        I64(i32),
+        F64(i32),
         String(i32),
         Array(i32),
         Object(i32),
@@ -1255,9 +1393,11 @@ mod delta {
 
     struct IValueAccumulator<H> {
         b: bool,
-        u: u64,
-        i: i64,
-        f: f64,
+        u_32: u32,
+        i_32: i32,
+        u: u32,
+        i: u32,
+        f: u32,
         s: u32,
         a: u32,
         o: u32,
@@ -1268,9 +1408,11 @@ mod delta {
         fn default() -> Self {
             Self {
                 b: false,
+                u_32: 0,
+                i_32: 0,
                 u: 0,
                 i: 0,
-                f: f64::from_bits(0),
+                f: 0,
                 s: 0,
                 a: 0,
                 o: 0,
@@ -1293,20 +1435,30 @@ mod delta {
                     self.b = *x;
                     IValueDelta::Bool(diff)
                 }
+                IValueImpl::U32(x) => {
+                    let diff = x.wrapping_sub(self.u_32);
+                    self.u_32 = *x;
+                    IValueDelta::U32(diff as i32)
+                }
+                IValueImpl::I32(x) => {
+                    let diff = x.wrapping_sub(self.i_32);
+                    self.i_32 = *x;
+                    IValueDelta::I32(diff)
+                }
                 IValueImpl::U64(x) => {
-                    let diff = x.wrapping_sub(self.u);
-                    self.u = *x;
-                    IValueDelta::U64(diff as i64)
+                    let diff = x.id().wrapping_sub(self.u);
+                    self.u = x.id();
+                    IValueDelta::U64(diff as i32)
                 }
                 IValueImpl::I64(x) => {
-                    let diff = x.wrapping_sub(self.i);
-                    self.i = *x;
-                    IValueDelta::I64(diff)
+                    let diff = x.id().wrapping_sub(self.i);
+                    self.i = x.id();
+                    IValueDelta::I64(diff as i32)
                 }
                 IValueImpl::F64(x) => {
-                    let diff = x.0.to_bits() ^ self.f.to_bits();
-                    self.f = *x.0;
-                    IValueDelta::F64(f64::from_bits(diff))
+                    let diff = x.id().wrapping_sub(self.f);
+                    self.f = x.id();
+                    IValueDelta::F64(diff as i32)
                 }
                 IValueImpl::String(x) => {
                     let diff = x.id().wrapping_sub(self.s);
@@ -1334,20 +1486,30 @@ mod delta {
                     self.b = x;
                     IValueImpl::Bool(x)
                 }
+                IValueDelta::U32(x) => {
+                    let x = self.u_32.wrapping_add(*x as u32);
+                    self.u_32 = x;
+                    IValueImpl::U32(x)
+                }
+                IValueDelta::I32(x) => {
+                    let x = self.i_32.wrapping_add(*x);
+                    self.i_32 = x;
+                    IValueImpl::I32(x)
+                }
                 IValueDelta::U64(x) => {
-                    let x = self.u.wrapping_add(*x as u64);
+                    let x = self.u.wrapping_add(*x as u32);
                     self.u = x;
-                    IValueImpl::U64(x)
+                    IValueImpl::U64(Interned::from_id(x))
                 }
                 IValueDelta::I64(x) => {
-                    let x = self.i.wrapping_add(*x);
+                    let x = self.i.wrapping_add(*x as u32);
                     self.i = x;
-                    IValueImpl::I64(x)
+                    IValueImpl::I64(Interned::from_id(x))
                 }
                 IValueDelta::F64(x) => {
-                    let x = f64::from_bits(self.f.to_bits() ^ x.to_bits());
+                    let x = self.f.wrapping_add(*x as u32);
                     self.f = x;
-                    IValueImpl::F64(Float64(OrderedFloat(x)))
+                    IValueImpl::F64(Interned::from_id(x))
                 }
                 IValueDelta::String(x) => {
                     let x = self.s.wrapping_add(*x as u32);
@@ -1435,6 +1597,23 @@ mod delta {
                 })
                 .collect()
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn ivalue_size() {
+        assert_eq!(core::mem::size_of::<IValue>(), 8);
+        assert_eq!(core::mem::align_of::<IValue>(), 4);
+
+        assert_eq!(core::mem::size_of::<InternedStrKey>(), 4);
+        assert_eq!(core::mem::align_of::<InternedStrKey>(), 4);
+
+        assert_eq!(core::mem::size_of::<(InternedStrKey, IValue)>(), 12);
+        assert_eq!(core::mem::align_of::<(InternedStrKey, IValue)>(), 4);
     }
 }
 
