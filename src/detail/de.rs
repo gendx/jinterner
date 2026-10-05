@@ -2,7 +2,7 @@ use super::{IValue, IValueImpl, InternedStrKey};
 use crate::{BufferPool, Jinterners};
 use alloc::format;
 use alloc::string::String;
-use blazinterner::{DefaultBuildHasher, InternedSlice, InternedStr};
+use blazinterner::{DefaultBuildHasher, InternedSlice, InternedStr, U32};
 use core::hash::BuildHasher;
 use serde::de::{
     DeserializeSeed, EnumAccess, Error, Expected, MapAccess, SeqAccess, Unexpected, VariantAccess,
@@ -13,7 +13,7 @@ use serde_json::error::Error as JsonError;
 
 fn deserialize_array<'de, V, H>(
     visitor: V,
-    array: InternedSlice<IValue<H>, H>,
+    array: InternedSlice<IValue<H>, H, U32>,
     interners: &'de Jinterners<H>,
 ) -> Result<V::Value, JsonError>
 where
@@ -36,7 +36,7 @@ where
 
 fn deserialize_array_expected_len<'de, V, H>(
     visitor: V,
-    array: InternedSlice<IValue<H>, H>,
+    array: InternedSlice<IValue<H>, H, U32>,
     interners: &'de Jinterners<H>,
     expected_len: usize,
     make_error_msg: impl FnOnce() -> String,
@@ -65,7 +65,7 @@ where
 
 fn deserialize_object<'de, V, H>(
     visitor: V,
-    object: InternedSlice<(InternedStrKey<H>, IValue<H>), H>,
+    object: InternedSlice<(InternedStrKey<H>, IValue<H>), H, U32>,
     interners: &'de Jinterners<H>,
 ) -> Result<V::Value, JsonError>
 where
@@ -103,8 +103,8 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
         match self.value {
             IValueImpl::Null => Unexpected::Unit,
             IValueImpl::Bool(x) => Unexpected::Bool(*x),
-            IValueImpl::U32(x) => Unexpected::Unsigned(*x as u64),
-            IValueImpl::I32(x) => Unexpected::Signed(*x as i64),
+            IValueImpl::U32(x) => Unexpected::Unsigned(u32::from_ne_bytes(*x) as u64),
+            IValueImpl::I32(x) => Unexpected::Signed(i32::from_ne_bytes(*x) as i64),
             IValueImpl::U64(x) => Unexpected::Unsigned(self.interners.uint64.lookup(*x)),
             IValueImpl::I64(x) => Unexpected::Signed(self.interners.int64.lookup(*x)),
             IValueImpl::F64(x) => Unexpected::Float(self.interners.float64.lookup(*x).0.0),
@@ -119,8 +119,8 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
         V: Visitor<'de>,
     {
         match self.value {
-            IValueImpl::U32(x) => visitor.visit_u32(*x),
-            IValueImpl::I32(x) => visitor.visit_i32(*x),
+            IValueImpl::U32(x) => visitor.visit_u32(u32::from_ne_bytes(*x)),
+            IValueImpl::I32(x) => visitor.visit_i32(i32::from_ne_bytes(*x)),
             IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.lookup(*x)),
             IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.lookup(*x)),
             _ => Err(self.invalid_type(&visitor)),
@@ -132,8 +132,8 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
         V: Visitor<'de>,
     {
         match self.value {
-            IValueImpl::U32(x) => visitor.visit_u32(*x),
-            IValueImpl::I32(x) => visitor.visit_i32(*x),
+            IValueImpl::U32(x) => visitor.visit_u32(u32::from_ne_bytes(*x)),
+            IValueImpl::I32(x) => visitor.visit_i32(i32::from_ne_bytes(*x)),
             IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.lookup(*x)),
             IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.lookup(*x)),
             IValueImpl::F64(x) => visitor.visit_f64(self.interners.float64.lookup(*x).0.0),
@@ -152,8 +152,8 @@ impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
         match self.value {
             IValueImpl::Null => visitor.visit_unit(),
             IValueImpl::Bool(x) => visitor.visit_bool(*x),
-            IValueImpl::U32(x) => visitor.visit_u32(*x),
-            IValueImpl::I32(x) => visitor.visit_i32(*x),
+            IValueImpl::U32(x) => visitor.visit_u32(u32::from_ne_bytes(*x)),
+            IValueImpl::I32(x) => visitor.visit_i32(i32::from_ne_bytes(*x)),
             IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.lookup(*x)),
             IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.lookup(*x)),
             IValueImpl::F64(x) => visitor.visit_f64(self.interners.float64.lookup(*x).0.0),
@@ -524,7 +524,7 @@ impl<'de, H> MapAccess<'de> for ObjectAccess<'_, 'de, H> {
 }
 
 struct EnumAccessor<'a, 'b, H> {
-    variant: InternedStr<H>,
+    variant: InternedStr<H, U32>,
     value: Option<&'a IValueImpl<H>>,
     interners: &'b Jinterners<H>,
 }
@@ -640,7 +640,7 @@ impl<'de, H> VariantAccess<'de> for VariantAccessor<'_, 'de, H> {
 }
 
 struct StringDeserializer<'b, H> {
-    istring: InternedStr<H>,
+    istring: InternedStr<H, U32>,
     interners: &'b Jinterners<H>,
 }
 
@@ -1018,21 +1018,21 @@ where
     where
         E: Error,
     {
-        Ok(IValueImpl::I32(v.into()))
+        self.visit_i32(v.into())
     }
 
     fn visit_i16<E>(self, v: i16) -> Result<Self::Value, E>
     where
         E: Error,
     {
-        Ok(IValueImpl::I32(v.into()))
+        self.visit_i32(v.into())
     }
 
     fn visit_i32<E>(self, v: i32) -> Result<Self::Value, E>
     where
         E: Error,
     {
-        Ok(IValueImpl::I32(v))
+        Ok(IValueImpl::I32(v.to_ne_bytes()))
     }
 
     fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
@@ -1062,21 +1062,21 @@ where
     where
         E: Error,
     {
-        Ok(IValueImpl::U32(v.into()))
+        self.visit_u32(v.into())
     }
 
     fn visit_u16<E>(self, v: u16) -> Result<Self::Value, E>
     where
         E: Error,
     {
-        Ok(IValueImpl::U32(v.into()))
+        self.visit_u32(v.into())
     }
 
     fn visit_u32<E>(self, v: u32) -> Result<Self::Value, E>
     where
         E: Error,
     {
-        Ok(IValueImpl::U32(v))
+        Ok(IValueImpl::U32(v.to_ne_bytes()))
     }
 
     fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
@@ -1391,21 +1391,21 @@ pub mod sync {
         where
             E: Error,
         {
-            Ok(IValueImpl::I32(v.into()))
+            self.visit_i32(v.into())
         }
 
         fn visit_i16<E>(self, v: i16) -> Result<Self::Value, E>
         where
             E: Error,
         {
-            Ok(IValueImpl::I32(v.into()))
+            self.visit_i32(v.into())
         }
 
         fn visit_i32<E>(self, v: i32) -> Result<Self::Value, E>
         where
             E: Error,
         {
-            Ok(IValueImpl::I32(v))
+            Ok(IValueImpl::I32(v.to_ne_bytes()))
         }
 
         fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
@@ -1435,21 +1435,21 @@ pub mod sync {
         where
             E: Error,
         {
-            Ok(IValueImpl::U32(v.into()))
+            self.visit_u32(v.into())
         }
 
         fn visit_u16<E>(self, v: u16) -> Result<Self::Value, E>
         where
             E: Error,
         {
-            Ok(IValueImpl::U32(v.into()))
+            self.visit_u32(v.into())
         }
 
         fn visit_u32<E>(self, v: u32) -> Result<Self::Value, E>
         where
             E: Error,
         {
-            Ok(IValueImpl::U32(v))
+            Ok(IValueImpl::U32(v.to_ne_bytes()))
         }
 
         fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>

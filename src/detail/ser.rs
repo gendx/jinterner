@@ -35,15 +35,15 @@ where
     }
 
     fn serialize_i8(self, value: i8) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::I32(value.into()))
+        self.serialize_i32(value.into())
     }
 
     fn serialize_i16(self, value: i16) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::I32(value.into()))
+        self.serialize_i32(value.into())
     }
 
     fn serialize_i32(self, value: i32) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::I32(value))
+        Ok(IValueImpl::I32(value.to_ne_bytes()))
     }
 
     fn serialize_i64(self, value: i64) -> Result<Self::Ok, Self::Error> {
@@ -51,15 +51,15 @@ where
     }
 
     fn serialize_u8(self, value: u8) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::U32(value.into()))
+        self.serialize_u32(value.into())
     }
 
     fn serialize_u16(self, value: u16) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::U32(value.into()))
+        self.serialize_u32(value.into())
     }
 
     fn serialize_u32(self, value: u32) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::U32(value))
+        Ok(IValueImpl::U32(value.to_ne_bytes()))
     }
 
     fn serialize_u64(self, value: u64) -> Result<Self::Ok, Self::Error> {
@@ -88,7 +88,7 @@ where
         // TODO: Can we do better?
         let iter = value
             .iter()
-            .map(|byte| IValue(IValueImpl::U32(*byte as u32)));
+            .map(|byte| IValue(IValueImpl::U32((*byte as u32).to_ne_bytes())));
         // SAFETY: The iterator length is trusted, as it's a simple mapping on a
         // slice iterator.
         let index = unsafe { self.interners.iarray.intern_iter(iter) };
@@ -686,15 +686,15 @@ where
     }
 
     fn serialize_i8(self, value: i8) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::I32(value.into()))
+        self.serialize_i32(value.into())
     }
 
     fn serialize_i16(self, value: i16) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::I32(value.into()))
+        self.serialize_i32(value.into())
     }
 
     fn serialize_i32(self, value: i32) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::I32(value))
+        Ok(IValueImpl::I32(value.to_ne_bytes()))
     }
 
     fn serialize_i64(self, value: i64) -> Result<Self::Ok, Self::Error> {
@@ -702,15 +702,15 @@ where
     }
 
     fn serialize_u8(self, value: u8) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::U32(value.into()))
+        self.serialize_u32(value.into())
     }
 
     fn serialize_u16(self, value: u16) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::U32(value.into()))
+        self.serialize_u32(value.into())
     }
 
     fn serialize_u32(self, value: u32) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::U32(value))
+        Ok(IValueImpl::U32(value.to_ne_bytes()))
     }
 
     fn serialize_u64(self, value: u64) -> Result<Self::Ok, Self::Error> {
@@ -739,7 +739,7 @@ where
         // TODO: Can we do better?
         let iter = value
             .iter()
-            .map(|byte| IValue(IValueImpl::U32(*byte as u32)));
+            .map(|byte| IValue(IValueImpl::U32((*byte as u32).to_ne_bytes())));
         // SAFETY: The iterator length is trusted, as it's a simple mapping on a
         // slice iterator.
         let index = unsafe { self.interners.iarray.intern_iter_mut(iter) };
@@ -1306,8 +1306,8 @@ impl<'a, H> Serialize for BoundValue<'a, H> {
         match &self.value.0 {
             IValueImpl::Null => serializer.serialize_unit(),
             IValueImpl::Bool(x) => serializer.serialize_bool(*x),
-            IValueImpl::U32(x) => serializer.serialize_u32(*x),
-            IValueImpl::I32(x) => serializer.serialize_i32(*x),
+            IValueImpl::U32(x) => serializer.serialize_u32(u32::from_ne_bytes(*x)),
+            IValueImpl::I32(x) => serializer.serialize_i32(i32::from_ne_bytes(*x)),
             IValueImpl::U64(x) => serializer.serialize_u64(self.interners.uint64.lookup(*x)),
             IValueImpl::I64(x) => serializer.serialize_i64(self.interners.int64.lookup(*x)),
             IValueImpl::F64(x) => serializer.serialize_f64(self.interners.float64.lookup(*x).0.0),

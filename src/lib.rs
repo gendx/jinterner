@@ -21,7 +21,7 @@ mod util;
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
 pub use blazinterner::StdBuildHasher;
-use blazinterner::{Arena, ArenaSlice, ArenaStr, InternedSlice};
+use blazinterner::{Arena, ArenaSlice, ArenaStr, InternedSlice, U32};
 pub use blazinterner::{DefaultBuildHasher, HashbrownBuildHasher};
 #[cfg(feature = "retain")]
 use blazinterner::{RetainBuilder as RetainItemBuilder, RetainSliceBuilder, RetainStrBuilder};
@@ -49,12 +49,12 @@ pub use util::BufferPool;
 
 /// An arena to store interned JSON values.
 pub struct Jinterners<H = DefaultBuildHasher> {
-    uint64: Arena<u64, u64, H>,
-    int64: Arena<i64, i64, H>,
-    float64: Arena<Float64, Float64, H>,
-    string: ArenaStr<H>,
-    iarray: ArenaSlice<IValue<H>, H>,
-    iobject: ArenaSlice<(InternedStrKey<H>, IValue<H>), H>,
+    uint64: Arena<u64, u64, H, U32>,
+    int64: Arena<i64, i64, H, U32>,
+    float64: Arena<Float64, Float64, H, U32>,
+    string: ArenaStr<H, U32>,
+    iarray: ArenaSlice<IValue<H>, H, U32>,
+    iobject: ArenaSlice<(InternedStrKey<H>, IValue<H>), H, U32>,
 }
 
 impl<H> Default for Jinterners<H>
@@ -429,10 +429,7 @@ where
         }
 
         let mut optimized = self.optimize_once_scalars().map(|(jinterners, mapping)| {
-            let mapping = mapping.promote(
-                jinterners.iarray.slices() as u32,
-                jinterners.iobject.slices() as u32,
-            );
+            let mapping = mapping.promote(jinterners.iarray.slices(), jinterners.iobject.slices());
             (jinterners, mapping)
         });
 
@@ -469,12 +466,7 @@ where
                                 iarray,
                                 iobject,
                             },
-                            mapping_opt.promote(
-                                num_uint64s as u32,
-                                num_int64s as u32,
-                                num_float64s as u32,
-                                num_strings as u32,
-                            ),
+                            mapping_opt.promote(num_uint64s, num_int64s, num_float64s, num_strings),
                         )
                     }
                     Some((mut jinterners, mapping)) => {
@@ -603,8 +595,8 @@ where
     fn optimize_once_no_scalars(
         &self,
     ) -> Option<(
-        ArenaSlice<IValue<H>, H>,
-        ArenaSlice<(InternedStrKey<H>, IValue<H>), H>,
+        ArenaSlice<IValue<H>, H, U32>,
+        ArenaSlice<(InternedStrKey<H>, IValue<H>), H, U32>,
         MappingNoScalars,
     )> {
         let iarray_map = self.iarray.sort();
@@ -675,14 +667,14 @@ impl<H> Jinterners<H> {
 #[expect(clippy::type_complexity)]
 pub struct RetainBuilder<'a, H = DefaultBuildHasher> {
     jinterners: &'a Jinterners<H>,
-    u64s: RetainItemBuilder<u64, u64, H>,
-    i64s: RetainItemBuilder<i64, i64, H>,
-    f64s: RetainItemBuilder<Float64, Float64, H>,
-    strings: RetainStrBuilder<H>,
-    arrays: RetainSliceBuilder<IValue<H>, H>,
-    objects: RetainSliceBuilder<(InternedStrKey<H>, IValue<H>), H>,
-    queue_arrays: Vec<InternedSlice<IValue<H>, H>>,
-    queue_objects: Vec<InternedSlice<(InternedStrKey<H>, IValue<H>), H>>,
+    u64s: RetainItemBuilder<u64, u64, H, U32>,
+    i64s: RetainItemBuilder<i64, i64, H, U32>,
+    f64s: RetainItemBuilder<Float64, Float64, H, U32>,
+    strings: RetainStrBuilder<H, U32>,
+    arrays: RetainSliceBuilder<IValue<H>, H, U32>,
+    objects: RetainSliceBuilder<(InternedStrKey<H>, IValue<H>), H, U32>,
+    queue_arrays: Vec<InternedSlice<IValue<H>, H, U32>>,
+    queue_objects: Vec<InternedSlice<(InternedStrKey<H>, IValue<H>), H, U32>>,
 }
 
 #[cfg(feature = "retain")]

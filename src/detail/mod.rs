@@ -14,7 +14,9 @@ use alloc::boxed::Box;
 use alloc::string::String;
 #[cfg(feature = "serde")]
 use alloc::vec::Vec;
-use blazinterner::{ArenaStr, DefaultBuildHasher, Interned, InternedSlice, InternedStr};
+use blazinterner::{
+    ArenaStr, DefaultBuildHasher, Index, Interned, InternedSlice, InternedStr, U32,
+};
 use core::cmp::Ordering;
 use core::fmt::Debug;
 use core::hash::{BuildHasher, Hash, Hasher};
@@ -65,11 +67,11 @@ impl<'a, H> BoundValue<'a, H> {
 ///
 /// You can obtain a key with [`Jinterners::find_key()`] and use it to lookup
 /// values in JSON objects with [`MapRef::get_by_key()`].
-pub struct InternedStrKey<H = DefaultBuildHasher>(pub(crate) InternedStr<H>);
+pub struct InternedStrKey<H = DefaultBuildHasher>(pub(crate) InternedStr<H, U32>);
 
 impl<H> Default for InternedStrKey<H> {
     fn default() -> Self {
-        InternedStrKey(InternedStr::from_id(0))
+        InternedStrKey(InternedStr::from_id(U32::from_usize(0)))
     }
 }
 
@@ -237,12 +239,12 @@ impl<H> IValue<H> {
 
     /// Interns an integer JSON value.
     pub fn u32(x: u32) -> Self {
-        Self(IValueImpl::U32(x))
+        Self(IValueImpl::U32(x.to_ne_bytes()))
     }
 
     /// Interns an integer JSON value.
     pub fn i32(x: i32) -> Self {
-        Self(IValueImpl::I32(x))
+        Self(IValueImpl::I32(x.to_ne_bytes()))
     }
 }
 
@@ -737,14 +739,14 @@ enum IValueImpl<H> {
     #[default]
     Null,
     Bool(bool),
-    U32(u32),
-    I32(i32),
-    U64(Interned<u64, u64, H>),
-    I64(Interned<i64, i64, H>),
-    F64(Interned<Float64, Float64, H>),
-    String(InternedStr<H>),
-    Array(InternedSlice<IValue<H>, H>),
-    Object(InternedSlice<(InternedStrKey<H>, IValue<H>), H>),
+    U32([u8; 4]),
+    I32([u8; 4]),
+    U64(Interned<u64, u64, H, U32>),
+    I64(Interned<i64, i64, H, U32>),
+    F64(Interned<Float64, Float64, H, U32>),
+    String(InternedStr<H, U32>),
+    Array(InternedSlice<IValue<H>, H, U32>),
+    Object(InternedSlice<(InternedStrKey<H>, IValue<H>), H, U32>),
 }
 
 impl<H> Debug for IValueImpl<H> {
@@ -752,8 +754,14 @@ impl<H> Debug for IValueImpl<H> {
         match self {
             IValueImpl::Null => f.debug_tuple("IValue::Null").finish(),
             IValueImpl::Bool(x) => f.debug_tuple("IValue::Bool").field(x).finish(),
-            IValueImpl::U32(x) => f.debug_tuple("IValue::U32").field(x).finish(),
-            IValueImpl::I32(x) => f.debug_tuple("IValue::I32").field(x).finish(),
+            IValueImpl::U32(x) => f
+                .debug_tuple("IValue::U32")
+                .field(&u32::from_ne_bytes(*x))
+                .finish(),
+            IValueImpl::I32(x) => f
+                .debug_tuple("IValue::I32")
+                .field(&i32::from_ne_bytes(*x))
+                .finish(),
             IValueImpl::U64(x) => f.debug_tuple("IValue::U64").field(x).finish(),
             IValueImpl::I64(x) => f.debug_tuple("IValue::I64").field(x).finish(),
             IValueImpl::F64(x) => f.debug_tuple("IValue::F64").field(x).finish(),
@@ -806,8 +814,12 @@ impl<H> Ord for IValueImpl<H> {
             Ordering::Equal => match (self, other) {
                 (IValueImpl::Null, IValueImpl::Null) => Ordering::Equal,
                 (IValueImpl::Bool(a), IValueImpl::Bool(b)) => a.cmp(b),
-                (IValueImpl::U32(a), IValueImpl::U32(b)) => a.cmp(b),
-                (IValueImpl::I32(a), IValueImpl::I32(b)) => a.cmp(b),
+                (IValueImpl::U32(a), IValueImpl::U32(b)) => {
+                    u32::from_ne_bytes(*a).cmp(&u32::from_ne_bytes(*b))
+                }
+                (IValueImpl::I32(a), IValueImpl::I32(b)) => {
+                    i32::from_ne_bytes(*a).cmp(&i32::from_ne_bytes(*b))
+                }
                 (IValueImpl::U64(a), IValueImpl::U64(b)) => a.cmp(b),
                 (IValueImpl::I64(a), IValueImpl::I64(b)) => a.cmp(b),
                 (IValueImpl::F64(a), IValueImpl::F64(b)) => a.cmp(b),
@@ -856,8 +868,18 @@ impl<H> Serialize for IValueImpl<H> {
         match self {
             IValueImpl::Null => serializer.serialize_unit_variant("IValueImpl", 0, "Null"),
             IValueImpl::Bool(x) => serializer.serialize_newtype_variant("IValueImpl", 1, "Bool", x),
-            IValueImpl::U32(x) => serializer.serialize_newtype_variant("IValueImpl", 2, "U32", x),
-            IValueImpl::I32(x) => serializer.serialize_newtype_variant("IValueImpl", 3, "I32", x),
+            IValueImpl::U32(x) => serializer.serialize_newtype_variant(
+                "IValueImpl",
+                2,
+                "U32",
+                &u32::from_ne_bytes(*x),
+            ),
+            IValueImpl::I32(x) => serializer.serialize_newtype_variant(
+                "IValueImpl",
+                3,
+                "I32",
+                &i32::from_ne_bytes(*x),
+            ),
             IValueImpl::U64(x) => serializer.serialize_newtype_variant("IValueImpl", 4, "U64", x),
             IValueImpl::I64(x) => serializer.serialize_newtype_variant("IValueImpl", 5, "I64", x),
             IValueImpl::F64(x) => serializer.serialize_newtype_variant("IValueImpl", 6, "F64", x),
@@ -926,8 +948,14 @@ impl<'de, H> Visitor<'de> for IValueImplVisitor<H> {
                 IValueImpl::Null
             }
             IValueImplVariant::Bool => IValueImpl::Bool(data.newtype_variant()?),
-            IValueImplVariant::U32 => IValueImpl::U32(data.newtype_variant()?),
-            IValueImplVariant::I32 => IValueImpl::I32(data.newtype_variant()?),
+            IValueImplVariant::U32 => {
+                let x: u32 = data.newtype_variant()?;
+                IValueImpl::U32(x.to_ne_bytes())
+            }
+            IValueImplVariant::I32 => {
+                let x: i32 = data.newtype_variant()?;
+                IValueImpl::I32(x.to_ne_bytes())
+            }
             IValueImplVariant::U64 => IValueImpl::U64(data.newtype_variant()?),
             IValueImplVariant::I64 => IValueImpl::I64(data.newtype_variant()?),
             IValueImplVariant::F64 => IValueImpl::F64(data.newtype_variant()?),
@@ -962,31 +990,35 @@ where
 {
     #[cfg(feature = "sync")]
     fn u64(interners: &Jinterners<H>, x: u64) -> Self {
-        match x.try_into() {
-            Ok(x32) => IValueImpl::U32(x32),
-            Err(_) => IValueImpl::U64(interners.uint64.intern(x)),
+        if let Ok(x32) = u32::try_from(x) {
+            IValueImpl::U32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::U64(interners.uint64.intern(x))
         }
     }
 
     fn u64_mut(interners: &mut Jinterners<H>, x: u64) -> Self {
-        match x.try_into() {
-            Ok(x32) => IValueImpl::U32(x32),
-            Err(_) => IValueImpl::U64(interners.uint64.intern_mut(x)),
+        if let Ok(x32) = u32::try_from(x) {
+            IValueImpl::U32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::U64(interners.uint64.intern_mut(x))
         }
     }
 
     #[cfg(feature = "sync")]
     fn i64(interners: &Jinterners<H>, x: i64) -> Self {
-        match x.try_into() {
-            Ok(x32) => IValueImpl::I32(x32),
-            Err(_) => IValueImpl::I64(interners.int64.intern(x)),
+        if let Ok(x32) = i32::try_from(x) {
+            IValueImpl::I32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::I64(interners.int64.intern(x))
         }
     }
 
     fn i64_mut(interners: &mut Jinterners<H>, x: i64) -> Self {
-        match x.try_into() {
-            Ok(x32) => IValueImpl::I32(x32),
-            Err(_) => IValueImpl::I64(interners.int64.intern_mut(x)),
+        if let Ok(x32) = i32::try_from(x) {
+            IValueImpl::I32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::I64(interners.int64.intern_mut(x))
         }
     }
 
@@ -1153,8 +1185,12 @@ where
         match self {
             IValueImpl::Null => Value::Null,
             IValueImpl::Bool(x) => Value::Bool(*x),
-            IValueImpl::U32(x) => Value::Number(Number::from_u128(*x as u128).unwrap()),
-            IValueImpl::I32(x) => Value::Number(Number::from_i128(*x as i128).unwrap()),
+            IValueImpl::U32(x) => {
+                Value::Number(Number::from_u128(u32::from_ne_bytes(*x) as u128).unwrap())
+            }
+            IValueImpl::I32(x) => {
+                Value::Number(Number::from_i128(i32::from_ne_bytes(*x) as i128).unwrap())
+            }
             IValueImpl::U64(x) => {
                 let x = interners.uint64.lookup(*x);
                 Value::Number(Number::from_u128(x as u128).unwrap())
@@ -1191,8 +1227,8 @@ where
         match self {
             IValueImpl::Null => ValueRef::Null,
             IValueImpl::Bool(x) => ValueRef::Bool(*x),
-            IValueImpl::U32(x) => ValueRef::U64(*x as u64),
-            IValueImpl::I32(x) => ValueRef::I64(*x as i64),
+            IValueImpl::U32(x) => ValueRef::U64(u32::from_ne_bytes(*x) as u64),
+            IValueImpl::I32(x) => ValueRef::I64(i32::from_ne_bytes(*x) as i64),
             IValueImpl::U64(x) => ValueRef::U64(interners.uint64.lookup(*x)),
             IValueImpl::I64(x) => ValueRef::I64(interners.int64.lookup(*x)),
             IValueImpl::F64(x) => ValueRef::F64(interners.float64.lookup(*x).0.0),
@@ -1228,7 +1264,7 @@ pub enum ValueRef<'a, H = DefaultBuildHasher> {
 
 /// A shallow reference to a JSON map.
 pub struct MapRef<'a, H = DefaultBuildHasher> {
-    arena_str: &'a ArenaStr<H>,
+    arena_str: &'a ArenaStr<H, U32>,
     map: &'a [(InternedStrKey<H>, IValue<H>)],
 }
 
@@ -1352,13 +1388,13 @@ mod delta {
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(3, &self))?;
 
-            let iarray: RawDeltaEncoding<ArenaSlice<IValue<H>, H>, IArrayAccumulator<H>> = seq
+            let iarray: RawDeltaEncoding<ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>> = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(4, &self))?;
 
             #[expect(clippy::type_complexity)]
             let iobject: RawDeltaEncoding<
-                ArenaSlice<(InternedStrKey<H>, IValue<H>), H>,
+                ArenaSlice<(InternedStrKey<H>, IValue<H>), H, U32>,
                 IObjectAccumulator<H>,
             > = seq
                 .next_element()?
@@ -1436,43 +1472,51 @@ mod delta {
                     IValueDelta::Bool(diff)
                 }
                 IValueImpl::U32(x) => {
+                    let x = u32::from_ne_bytes(*x);
                     let diff = x.wrapping_sub(self.u_32);
-                    self.u_32 = *x;
+                    self.u_32 = x;
                     IValueDelta::U32(diff as i32)
                 }
                 IValueImpl::I32(x) => {
+                    let x = i32::from_ne_bytes(*x);
                     let diff = x.wrapping_sub(self.i_32);
-                    self.i_32 = *x;
+                    self.i_32 = x;
                     IValueDelta::I32(diff)
                 }
                 IValueImpl::U64(x) => {
-                    let diff = x.id().wrapping_sub(self.u);
-                    self.u = x.id();
+                    let id = x.id().to_usize() as u32;
+                    let diff = id.wrapping_sub(self.u);
+                    self.u = id;
                     IValueDelta::U64(diff as i32)
                 }
                 IValueImpl::I64(x) => {
-                    let diff = x.id().wrapping_sub(self.i);
-                    self.i = x.id();
+                    let id = x.id().to_usize() as u32;
+                    let diff = id.wrapping_sub(self.i);
+                    self.i = id;
                     IValueDelta::I64(diff as i32)
                 }
                 IValueImpl::F64(x) => {
-                    let diff = x.id().wrapping_sub(self.f);
-                    self.f = x.id();
+                    let id = x.id().to_usize() as u32;
+                    let diff = id.wrapping_sub(self.f);
+                    self.f = id;
                     IValueDelta::F64(diff as i32)
                 }
                 IValueImpl::String(x) => {
-                    let diff = x.id().wrapping_sub(self.s);
-                    self.s = x.id();
+                    let id = x.id().to_usize() as u32;
+                    let diff = id.wrapping_sub(self.s);
+                    self.s = id;
                     IValueDelta::String(diff as i32)
                 }
                 IValueImpl::Array(x) => {
-                    let diff = x.id().wrapping_sub(self.a);
-                    self.a = x.id();
+                    let id = x.id().to_usize() as u32;
+                    let diff = id.wrapping_sub(self.a);
+                    self.a = id;
                     IValueDelta::Array(diff as i32)
                 }
                 IValueImpl::Object(x) => {
-                    let diff = x.id().wrapping_sub(self.o);
-                    self.o = x.id();
+                    let id = x.id().to_usize() as u32;
+                    let diff = id.wrapping_sub(self.o);
+                    self.o = id;
                     IValueDelta::Object(diff as i32)
                 }
             }
@@ -1489,42 +1533,42 @@ mod delta {
                 IValueDelta::U32(x) => {
                     let x = self.u_32.wrapping_add(*x as u32);
                     self.u_32 = x;
-                    IValueImpl::U32(x)
+                    IValueImpl::U32(x.to_ne_bytes())
                 }
                 IValueDelta::I32(x) => {
                     let x = self.i_32.wrapping_add(*x);
                     self.i_32 = x;
-                    IValueImpl::I32(x)
+                    IValueImpl::I32(x.to_ne_bytes())
                 }
                 IValueDelta::U64(x) => {
                     let x = self.u.wrapping_add(*x as u32);
                     self.u = x;
-                    IValueImpl::U64(Interned::from_id(x))
+                    IValueImpl::U64(Interned::from_id(U32::from_usize(x as usize)))
                 }
                 IValueDelta::I64(x) => {
                     let x = self.i.wrapping_add(*x as u32);
                     self.i = x;
-                    IValueImpl::I64(Interned::from_id(x))
+                    IValueImpl::I64(Interned::from_id(U32::from_usize(x as usize)))
                 }
                 IValueDelta::F64(x) => {
                     let x = self.f.wrapping_add(*x as u32);
                     self.f = x;
-                    IValueImpl::F64(Interned::from_id(x))
+                    IValueImpl::F64(Interned::from_id(U32::from_usize(x as usize)))
                 }
                 IValueDelta::String(x) => {
                     let x = self.s.wrapping_add(*x as u32);
                     self.s = x;
-                    IValueImpl::String(InternedStr::from_id(x))
+                    IValueImpl::String(InternedStr::from_id(U32::from_usize(x as usize)))
                 }
                 IValueDelta::Array(x) => {
                     let x = self.a.wrapping_add(*x as u32);
                     self.a = x;
-                    IValueImpl::Array(InternedSlice::from_id(x))
+                    IValueImpl::Array(InternedSlice::from_id(U32::from_usize(x as usize)))
                 }
                 IValueDelta::Object(x) => {
                     let x = self.o.wrapping_add(*x as u32);
                     self.o = x;
-                    IValueImpl::Object(InternedSlice::from_id(x))
+                    IValueImpl::Object(InternedSlice::from_id(U32::from_usize(x as usize)))
                 }
             }
         }
@@ -1575,7 +1619,7 @@ mod delta {
             let mut key = 0;
             v.iter()
                 .map(|(k, x)| {
-                    let k = k.0.id();
+                    let k = k.0.id().to_usize() as u32;
                     let kdiff = k.wrapping_sub(key);
                     key = k;
                     let acc = self.map.entry(k).or_default();
@@ -1593,7 +1637,10 @@ mod delta {
                     key = k;
                     let acc = self.map.entry(k).or_default();
                     let x = IValue(acc.unfold(xdiff));
-                    (InternedStrKey(InternedStr::from_id(k)), x)
+                    (
+                        InternedStrKey(InternedStr::from_id(U32::from_usize(k as usize))),
+                        x,
+                    )
                 })
                 .collect()
         }
@@ -1606,14 +1653,14 @@ mod test {
 
     #[test]
     fn ivalue_size() {
-        assert_eq!(core::mem::size_of::<IValue>(), 8);
-        assert_eq!(core::mem::align_of::<IValue>(), 4);
+        assert_eq!(core::mem::size_of::<IValue>(), 5);
+        assert_eq!(core::mem::align_of::<IValue>(), 1);
 
         assert_eq!(core::mem::size_of::<InternedStrKey>(), 4);
-        assert_eq!(core::mem::align_of::<InternedStrKey>(), 4);
+        assert_eq!(core::mem::align_of::<InternedStrKey>(), 1);
 
-        assert_eq!(core::mem::size_of::<(InternedStrKey, IValue)>(), 12);
-        assert_eq!(core::mem::align_of::<(InternedStrKey, IValue)>(), 4);
+        assert_eq!(core::mem::size_of::<(InternedStrKey, IValue)>(), 9);
+        assert_eq!(core::mem::align_of::<(InternedStrKey, IValue)>(), 1);
     }
 }
 

@@ -1,15 +1,15 @@
 use super::{IValue, IValueImpl, InternedStrKey};
-use blazinterner::ForwardMapping;
+use blazinterner::{ForwardMapping, Index, U32};
 
 /// Mapping to convert values from one [`Jinterners`](crate::Jinterners)
 /// instance to another.
 pub struct Mapping {
-    pub(crate) uint64: ForwardMapping,
-    pub(crate) int64: ForwardMapping,
-    pub(crate) float64: ForwardMapping,
-    pub(crate) string: ForwardMapping,
-    pub(crate) iarray: ForwardMapping,
-    pub(crate) iobject: ForwardMapping,
+    pub(crate) uint64: ForwardMapping<U32>,
+    pub(crate) int64: ForwardMapping<U32>,
+    pub(crate) float64: ForwardMapping<U32>,
+    pub(crate) string: ForwardMapping<U32>,
+    pub(crate) iarray: ForwardMapping<U32>,
+    pub(crate) iobject: ForwardMapping<U32>,
 }
 
 impl Mapping {
@@ -97,21 +97,21 @@ impl Mapping {
 /// Mapping to convert values from one [`Jinterners`](crate::Jinterners)
 /// instance to another.
 pub(crate) struct MappingScalars {
-    pub(crate) uint64: ForwardMapping,
-    pub(crate) int64: ForwardMapping,
-    pub(crate) float64: ForwardMapping,
-    pub(crate) string: ForwardMapping,
+    pub(crate) uint64: ForwardMapping<U32>,
+    pub(crate) int64: ForwardMapping<U32>,
+    pub(crate) float64: ForwardMapping<U32>,
+    pub(crate) string: ForwardMapping<U32>,
 }
 
 impl MappingScalars {
-    pub fn promote(self, num_arrays: u32, num_objects: u32) -> Mapping {
+    pub fn promote(self, num_arrays: usize, num_objects: usize) -> Mapping {
         Mapping {
             uint64: self.uint64,
             int64: self.int64,
             float64: self.float64,
             string: self.string,
-            iarray: ForwardMapping::identity(num_arrays),
-            iobject: ForwardMapping::identity(num_objects),
+            iarray: ForwardMapping::identity(U32::from_usize(num_arrays)),
+            iobject: ForwardMapping::identity(U32::from_usize(num_objects)),
         }
     }
 
@@ -148,23 +148,23 @@ impl MappingScalars {
 /// Mapping to convert values from one [`Jinterners`](crate::Jinterners)
 /// instance to another.
 pub(crate) struct MappingNoScalars {
-    pub(crate) iarray: ForwardMapping,
-    pub(crate) iobject: ForwardMapping,
+    pub(crate) iarray: ForwardMapping<U32>,
+    pub(crate) iobject: ForwardMapping<U32>,
 }
 
 impl MappingNoScalars {
     pub fn promote(
         self,
-        num_uint64s: u32,
-        num_int64s: u32,
-        num_float64s: u32,
-        num_strings: u32,
+        num_uint64s: usize,
+        num_int64s: usize,
+        num_float64s: usize,
+        num_strings: usize,
     ) -> Mapping {
         Mapping {
-            uint64: ForwardMapping::identity(num_uint64s),
-            int64: ForwardMapping::identity(num_int64s),
-            float64: ForwardMapping::identity(num_float64s),
-            string: ForwardMapping::identity(num_strings),
+            uint64: ForwardMapping::identity(U32::from_usize(num_uint64s)),
+            int64: ForwardMapping::identity(U32::from_usize(num_int64s)),
+            float64: ForwardMapping::identity(U32::from_usize(num_float64s)),
+            string: ForwardMapping::identity(U32::from_usize(num_strings)),
             iarray: self.iarray,
             iobject: self.iobject,
         }
