@@ -23,6 +23,12 @@ use alloc::vec::Vec;
 pub use blazinterner::StdBuildHasher;
 use blazinterner::{Arena, ArenaSlice, ArenaStr, InternedSlice, U32};
 pub use blazinterner::{DefaultBuildHasher, HashbrownBuildHasher};
+#[cfg(feature = "serde")]
+use blazinterner::{
+    ExtendArena, ExtendArenaSlice, ExtendArenaStr, Snapshot as SnapshotItem,
+    SnapshotDiff as SnapshotItemDiff, SnapshotMark as SnapshotItemMark, SnapshotSlice,
+    SnapshotSliceDiff, SnapshotSliceMark, SnapshotStr, SnapshotStrDiff, SnapshotStrMark,
+};
 #[cfg(feature = "retain")]
 use blazinterner::{RetainBuilder as RetainItemBuilder, RetainSliceBuilder, RetainStrBuilder};
 use core::fmt::Debug;
@@ -39,6 +45,8 @@ pub use detail::{BoundValue, InterningDeserializerMut};
 pub use detail::{IValue, InternedStrKey, MapRef, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::{GetSize, GetSizeTracker};
+#[cfg(feature = "serde")]
+use serde::de::{DeserializeSeed, Error, SeqAccess, Visitor};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -284,6 +292,25 @@ impl<H> Jinterners<H> {
             array_items: self.iarray.items(),
             objects: self.iobject.slices(),
             object_key_values: self.iobject.items(),
+        }
+    }
+
+    /// Returns a snapshot of this arena.
+    ///
+    /// Note that because [`Jinterners`] is a concurrent data structure, this is
+    /// only a snapshot as viewed by this thread.
+    ///
+    /// Snapshots can be diffed into a [`SnapshotDiff`], which is useful to
+    /// serialize an arena incrementally as values are added to it.
+    #[cfg(feature = "serde")]
+    pub fn snapshot(&self) -> Snapshot<'_, H> {
+        Snapshot {
+            uint64: self.uint64.snapshot(),
+            int64: self.int64.snapshot(),
+            float64: self.float64.snapshot(),
+            string: self.string.snapshot(),
+            iarray: self.iarray.snapshot(),
+            iobject: self.iobject.snapshot(),
         }
     }
 }
@@ -758,6 +785,188 @@ where
         };
 
         Some((jinterners, mapping))
+    }
+}
+
+/// A mark indicates the position of a [`Snapshot`] in a [`Jinterners`] arena.
+///
+/// This allows creating a difference between two snapshots, via
+/// [`Snapshot::diff()`].
+#[cfg(feature = "serde")]
+pub struct SnapshotMark<H = DefaultBuildHasher> {
+    uint64: SnapshotItemMark<u64, u64, H, U32>,
+    int64: SnapshotItemMark<i64, i64, H, U32>,
+    float64: SnapshotItemMark<Float64, Float64, H, U32>,
+    string: SnapshotStrMark<H, U32>,
+    iarray: SnapshotSliceMark<IValue<H>, H, U32>,
+    iobject: SnapshotSliceMark<(InternedStrKey<H>, IValue<H>), H, U32>,
+}
+
+#[cfg(feature = "serde")]
+impl<H> Default for SnapshotMark<H> {
+    fn default() -> Self {
+        Self {
+            uint64: Default::default(),
+            int64: Default::default(),
+            float64: Default::default(),
+            string: Default::default(),
+            iarray: Default::default(),
+            iobject: Default::default(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<H> Clone for SnapshotMark<H> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<H> Copy for SnapshotMark<H> {}
+
+/// Snapshot of a [`Jinterners`] arena.
+///
+/// This struct is created by the [`snapshot()`](Jinterners::snapshot) function
+/// on [`Jinterners`].
+#[cfg(feature = "serde")]
+pub struct Snapshot<'a, H = DefaultBuildHasher> {
+    uint64: SnapshotItem<'a, u64, u64, H, U32>,
+    int64: SnapshotItem<'a, i64, i64, H, U32>,
+    float64: SnapshotItem<'a, Float64, Float64, H, U32>,
+    string: SnapshotStr<'a, H, U32>,
+    iarray: SnapshotSlice<'a, IValue<H>, H, U32>,
+    iobject: SnapshotSlice<'a, (InternedStrKey<H>, IValue<H>), H, U32>,
+}
+
+#[cfg(feature = "serde")]
+impl<H> Snapshot<'_, H> {
+    /// Returns the position of this snapshot in the arena.
+    pub fn mark(&self) -> SnapshotMark<H> {
+        SnapshotMark {
+            uint64: self.uint64.mark(),
+            int64: self.int64.mark(),
+            float64: self.float64.mark(),
+            string: self.string.mark(),
+            iarray: self.iarray.mark(),
+            iobject: self.iobject.mark(),
+        }
+    }
+
+    /// Returns the difference between this snapshot and a previous mark.
+    pub fn diff(&self, start: SnapshotMark<H>) -> SnapshotDiff<'_, H> {
+        SnapshotDiff {
+            uint64: self.uint64.diff(start.uint64),
+            int64: self.int64.diff(start.int64),
+            float64: self.float64.diff(start.float64),
+            string: self.string.diff(start.string),
+            iarray: self.iarray.diff(start.iarray),
+            iobject: self.iobject.diff(start.iobject),
+        }
+    }
+}
+
+/// Difference between two snapshots of a [`Jinterners`] arena.
+///
+/// This is useful to serialize an arena incrementally as more values are added
+/// to it.
+#[cfg(feature = "serde")]
+pub struct SnapshotDiff<'a, H = DefaultBuildHasher> {
+    uint64: SnapshotItemDiff<'a, u64, u64, H, U32>,
+    int64: SnapshotItemDiff<'a, i64, i64, H, U32>,
+    float64: SnapshotItemDiff<'a, Float64, Float64, H, U32>,
+    string: SnapshotStrDiff<'a, H, U32>,
+    iarray: SnapshotSliceDiff<'a, IValue<H>, H, U32>,
+    iobject: SnapshotSliceDiff<'a, (InternedStrKey<H>, IValue<H>), H, U32>,
+}
+
+#[cfg(feature = "serde")]
+impl<H> Serialize for SnapshotDiff<'_, H> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        (
+            &self.uint64,
+            &self.int64,
+            &self.float64,
+            &self.string,
+            &self.iarray,
+            &self.iobject,
+        )
+            .serialize(serializer)
+    }
+}
+
+/// Wrapper to extend a [`Jinterners`] arena incrementally, typically by
+/// deserializing a sequence of serialized [`SnapshotDiff`].
+#[cfg(feature = "serde")]
+pub struct ExtendJinterners<'a, H = DefaultBuildHasher> {
+    interners: &'a mut Jinterners<H>,
+}
+
+#[cfg(feature = "serde")]
+impl<'a, H> ExtendJinterners<'a, H> {
+    /// Wraps the given arena to deserialize into it.
+    pub fn new(interners: &'a mut Jinterners<H>) -> Self {
+        Self { interners }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, H> DeserializeSeed<'de> for ExtendJinterners<'_, H>
+where
+    H: Default + BuildHasher,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_tuple(
+            6,
+            ExtendJinternersVisitor {
+                interners: self.interners,
+            },
+        )
+    }
+}
+
+#[cfg(feature = "serde")]
+struct ExtendJinternersVisitor<'a, H> {
+    interners: &'a mut Jinterners<H>,
+}
+
+#[cfg(feature = "serde")]
+impl<'de, H> Visitor<'de> for ExtendJinternersVisitor<'_, H>
+where
+    H: Default + BuildHasher,
+{
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+        formatter.write_str("a tuple with 6 elements")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        seq.next_element_seed(ExtendArena::new(&mut self.interners.uint64))?
+            .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+        seq.next_element_seed(ExtendArena::new(&mut self.interners.int64))?
+            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+        seq.next_element_seed(ExtendArena::new(&mut self.interners.float64))?
+            .ok_or_else(|| A::Error::invalid_length(2, &self))?;
+        seq.next_element_seed(ExtendArenaStr::new(&mut self.interners.string))?
+            .ok_or_else(|| A::Error::invalid_length(3, &self))?;
+        seq.next_element_seed(ExtendArenaSlice::new(&mut self.interners.iarray))?
+            .ok_or_else(|| A::Error::invalid_length(4, &self))?;
+        seq.next_element_seed(ExtendArenaSlice::new(&mut self.interners.iobject))?
+            .ok_or_else(|| A::Error::invalid_length(5, &self))?;
+        Ok(())
     }
 }
 
