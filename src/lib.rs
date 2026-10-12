@@ -21,13 +21,16 @@ mod util;
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
 pub use blazinterner::StdBuildHasher;
-use blazinterner::{Arena, ArenaSlice, ArenaStr, InternedSlice, U32};
+use blazinterner::{
+    Arena, ArenaSlice, ArenaStr, InternedSlice, Snapshot as SnapshotItem,
+    SnapshotMark as SnapshotItemMark, SnapshotSlice, SnapshotSliceMark, SnapshotStr,
+    SnapshotStrMark, U32,
+};
 pub use blazinterner::{DefaultBuildHasher, HashbrownBuildHasher};
 #[cfg(feature = "serde")]
 use blazinterner::{
-    ExtendArena, ExtendArenaSlice, ExtendArenaStr, Snapshot as SnapshotItem,
-    SnapshotDiff as SnapshotItemDiff, SnapshotMark as SnapshotItemMark, SnapshotSlice,
-    SnapshotSliceDiff, SnapshotSliceMark, SnapshotStr, SnapshotStrDiff, SnapshotStrMark,
+    ExtendArena, ExtendArenaSlice, ExtendArenaStr, SnapshotDiff as SnapshotItemDiff,
+    SnapshotSliceDiff, SnapshotStrDiff,
 };
 #[cfg(feature = "retain")]
 use blazinterner::{RetainBuilder as RetainItemBuilder, RetainSliceBuilder, RetainStrBuilder};
@@ -321,7 +324,6 @@ impl<H> Jinterners<H> {
     ///
     /// Snapshots can be diffed into a [`SnapshotDiff`], which is useful to
     /// serialize an arena incrementally as values are added to it.
-    #[cfg(feature = "serde")]
     pub fn snapshot(&self) -> Snapshot<'_, H> {
         Snapshot {
             uint64: self.uint64.snapshot(),
@@ -457,6 +459,20 @@ where
     /// to this [`Jinterners`] arena.
     pub fn find_key_mut(&mut self, key: &str) -> Option<InternedStrKey<H>> {
         self.string.find_mut(key).map(InternedStrKey)
+    }
+
+    /// Truncates this interner back to the given snapshot mark.
+    ///
+    /// This is a no-op if the snapshot mark is larger than this interner (for
+    /// example because the interner was already truncated to a smaller snapshot
+    /// in the meantime).
+    pub fn truncate(&mut self, snapshot: SnapshotMark<H>) {
+        self.uint64.truncate(snapshot.uint64);
+        self.int64.truncate(snapshot.int64);
+        self.float64.truncate(snapshot.float64);
+        self.string.truncate(snapshot.string);
+        self.iarray.truncate(snapshot.iarray);
+        self.iobject.truncate(snapshot.iobject);
     }
 }
 
@@ -811,7 +827,6 @@ where
 ///
 /// This allows creating a difference between two snapshots, via
 /// [`Snapshot::diff()`].
-#[cfg(feature = "serde")]
 pub struct SnapshotMark<H = DefaultBuildHasher> {
     uint64: SnapshotItemMark<u64, u64, H, U32>,
     int64: SnapshotItemMark<i64, i64, H, U32>,
@@ -821,7 +836,6 @@ pub struct SnapshotMark<H = DefaultBuildHasher> {
     iobject: SnapshotSliceMark<(InternedStrKey<H>, IValue<H>), H, U32>,
 }
 
-#[cfg(feature = "serde")]
 impl<H> Default for SnapshotMark<H> {
     fn default() -> Self {
         Self {
@@ -835,21 +849,18 @@ impl<H> Default for SnapshotMark<H> {
     }
 }
 
-#[cfg(feature = "serde")]
 impl<H> Clone for SnapshotMark<H> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-#[cfg(feature = "serde")]
 impl<H> Copy for SnapshotMark<H> {}
 
 /// Snapshot of a [`Jinterners`] arena.
 ///
 /// This struct is created by the [`snapshot()`](Jinterners::snapshot) function
 /// on [`Jinterners`].
-#[cfg(feature = "serde")]
 pub struct Snapshot<'a, H = DefaultBuildHasher> {
     uint64: SnapshotItem<'a, u64, u64, H, U32>,
     int64: SnapshotItem<'a, i64, i64, H, U32>,
@@ -859,7 +870,6 @@ pub struct Snapshot<'a, H = DefaultBuildHasher> {
     iobject: SnapshotSlice<'a, (InternedStrKey<H>, IValue<H>), H, U32>,
 }
 
-#[cfg(feature = "serde")]
 impl<H> Snapshot<'_, H> {
     /// Returns the position of this snapshot in the arena.
     pub fn mark(&self) -> SnapshotMark<H> {
@@ -874,6 +884,7 @@ impl<H> Snapshot<'_, H> {
     }
 
     /// Returns the difference between this snapshot and a previous mark.
+    #[cfg(feature = "serde")]
     pub fn diff(&self, start: SnapshotMark<H>) -> SnapshotDiff<'_, H> {
         SnapshotDiff {
             uint64: self.uint64.diff(start.uint64),
@@ -1382,5 +1393,45 @@ mod test {
         // Optimizing a second time is a no-op when the interner only contains
         // strings.
         assert!(interners.optimize_once().is_none());
+    }
+
+    #[test]
+    fn test_truncate() {
+        let mut interners: Jinterners = Jinterners::default();
+
+        let john = interners.intern_mut(json!({
+            "name": "John",
+            "surname": "Doe",
+            "address": {
+                "number": 42,
+                "street": "Way",
+                "city": "Big City",
+            }
+        }));
+        let snapshot = interners.snapshot().mark();
+
+        interners.intern_mut(json!({
+            "name": "Mary",
+            "surname": "Smith",
+            "address": {
+                "number": 123,
+                "square": "Central Square",
+                "city": "Small Town",
+            }
+        }));
+
+        interners.truncate(snapshot);
+        assert_eq!(
+            interners.lookup(&john),
+            json!({
+            "name": "John",
+            "surname": "Doe",
+            "address": {
+                "number": 42,
+                "street": "Way",
+                "city": "Big City",
+            }
+            })
+        );
     }
 }
