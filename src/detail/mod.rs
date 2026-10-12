@@ -31,6 +31,10 @@ pub use de::sync::InterningDeserializer;
 #[cfg(feature = "get-size2")]
 use get_size2::{GetSize, GetSizeTracker};
 use ordered_float::OrderedFloat;
+#[cfg(feature = "postcard-schema")]
+use postcard_schema::Schema;
+#[cfg(feature = "postcard-schema")]
+use postcard_schema::schema::{DataModelType, DataModelVariant, NamedType, NamedVariant};
 #[cfg(all(feature = "serde", feature = "sync"))]
 use ser::ValueSerializer;
 #[cfg(feature = "serde")]
@@ -135,6 +139,11 @@ impl<H> Serialize for InternedStrKey<H> {
     }
 }
 
+#[cfg(feature = "postcard-schema")]
+impl<H> Schema for InternedStrKey<H> {
+    const SCHEMA: &'static NamedType = InternedStr::<H, U32>::SCHEMA;
+}
+
 #[cfg(feature = "serde")]
 impl<'de, H> Deserialize<'de> for InternedStrKey<H> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -213,6 +222,11 @@ impl<H> Serialize for IValue<H> {
     {
         self.0.serialize(serializer)
     }
+}
+
+#[cfg(feature = "postcard-schema")]
+impl<H> Schema for IValue<H> {
+    const SCHEMA: &'static NamedType = IValueImpl::<H>::SCHEMA;
 }
 
 #[cfg(feature = "serde")]
@@ -728,6 +742,11 @@ impl Debug for Float64 {
     }
 }
 
+#[cfg(feature = "postcard-schema")]
+impl Schema for Float64 {
+    const SCHEMA: &'static NamedType = f64::SCHEMA;
+}
+
 #[cfg(feature = "get-size2")]
 impl GetSize for Float64 {
     // There is nothing on the heap, so the default implementation works out of
@@ -894,6 +913,57 @@ impl<H> Serialize for IValueImpl<H> {
             }
         }
     }
+}
+
+#[cfg(feature = "postcard-schema")]
+impl<H> Schema for IValueImpl<H> {
+    const SCHEMA: &'static NamedType = &NamedType {
+        name: "IValue",
+        ty: &DataModelType::Enum(&[
+            &NamedVariant {
+                name: "Null",
+                ty: &DataModelVariant::UnitVariant,
+            },
+            &NamedVariant {
+                name: "Bool",
+                ty: &DataModelVariant::NewtypeVariant(bool::SCHEMA),
+            },
+            &NamedVariant {
+                name: "U32",
+                ty: &DataModelVariant::NewtypeVariant(u32::SCHEMA),
+            },
+            &NamedVariant {
+                name: "I32",
+                ty: &DataModelVariant::NewtypeVariant(i32::SCHEMA),
+            },
+            &NamedVariant {
+                name: "U64",
+                ty: &DataModelVariant::NewtypeVariant(Interned::<u64, u64, H, U32>::SCHEMA),
+            },
+            &NamedVariant {
+                name: "I64",
+                ty: &DataModelVariant::NewtypeVariant(Interned::<i64, i64, H, U32>::SCHEMA),
+            },
+            &NamedVariant {
+                name: "F64",
+                ty: &DataModelVariant::NewtypeVariant(Interned::<Float64, Float64, H, U32>::SCHEMA),
+            },
+            &NamedVariant {
+                name: "String",
+                ty: &DataModelVariant::NewtypeVariant(InternedStr::<H, U32>::SCHEMA),
+            },
+            &NamedVariant {
+                name: "Array",
+                ty: &DataModelVariant::NewtypeVariant(InternedSlice::<IValue<H>, H, U32>::SCHEMA),
+            },
+            &NamedVariant {
+                name: "Object",
+                ty: &DataModelVariant::NewtypeVariant(
+                    InternedSlice::<(InternedStrKey<H>, IValue<H>), H, U32>::SCHEMA,
+                ),
+            },
+        ]),
+    };
 }
 
 #[cfg(feature = "serde")]
@@ -1318,6 +1388,8 @@ mod delta {
     use super::*;
     use crate::DeltaEncoding;
     use blazinterner::{Accumulator, ArenaSlice, DeltaEncoding as RawDeltaEncoding};
+    #[cfg(feature = "postcard-schema")]
+    use blazinterner::{Arena, ArenaStr};
     use hashbrown::HashMap;
     use serde::de::{Error, SeqAccess, Visitor};
     use serde::ser::SerializeTuple;
@@ -1345,6 +1417,24 @@ mod delta {
 
             tuple.end()
         }
+    }
+
+    #[cfg(feature = "postcard-schema")]
+    impl<H> Schema for DeltaEncoding<Jinterners<H>> {
+        const SCHEMA: &'static NamedType = &NamedType {
+            name: "DeltaEncoding<Jinterners>",
+            ty: &DataModelType::Tuple(&[
+                Arena::<u64, u64, H, U32>::SCHEMA,
+                Arena::<i64, i64, H, U32>::SCHEMA,
+                Arena::<Float64, Float64, H, U32>::SCHEMA,
+                ArenaStr::<H, U32>::SCHEMA,
+                RawDeltaEncoding::<&ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>>::SCHEMA,
+                RawDeltaEncoding::<
+                    &ArenaSlice<(InternedStrKey<H>, IValue<H>), H, U32>,
+                    IObjectAccumulator<H>,
+                >::SCHEMA,
+            ]),
+        };
     }
 
     impl<'de, H> Deserialize<'de> for DeltaEncoding<Jinterners<H>>
@@ -1414,6 +1504,7 @@ mod delta {
     /// Difference between two JSON values, for better delta encoding
     /// serialization.
     #[derive(Serialize, Deserialize)]
+    #[cfg_attr(feature = "postcard-schema", derive(Schema))]
     pub enum IValueDelta {
         Null,
         Bool(bool),

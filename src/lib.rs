@@ -45,6 +45,10 @@ pub use detail::{BoundValue, InterningDeserializerMut};
 pub use detail::{IValue, InternedStrKey, MapRef, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::{GetSize, GetSizeTracker};
+#[cfg(feature = "postcard-schema")]
+use postcard_schema::Schema;
+#[cfg(feature = "postcard-schema")]
+use postcard_schema::schema::{DataModelType, NamedType};
 #[cfg(feature = "serde")]
 use serde::de::{DeserializeSeed, Error, SeqAccess, Visitor};
 #[cfg(feature = "serde")]
@@ -155,6 +159,21 @@ impl<H> Serialize for Jinterners<H> {
         )
             .serialize(serializer)
     }
+}
+
+#[cfg(feature = "postcard-schema")]
+impl<H> Schema for Jinterners<H> {
+    const SCHEMA: &'static NamedType = &NamedType {
+        name: "Jinterners",
+        ty: &DataModelType::Tuple(&[
+            Arena::<u64, u64, H, U32>::SCHEMA,
+            Arena::<i64, i64, H, U32>::SCHEMA,
+            Arena::<Float64, Float64, H, U32>::SCHEMA,
+            ArenaStr::<H, U32>::SCHEMA,
+            ArenaSlice::<IValue<H>, H, U32>::SCHEMA,
+            ArenaSlice::<(InternedStrKey<H>, IValue<H>), H, U32>::SCHEMA,
+        ]),
+    };
 }
 
 #[cfg(feature = "serde")]
@@ -899,6 +918,21 @@ impl<H> Serialize for SnapshotDiff<'_, H> {
     }
 }
 
+#[cfg(all(feature = "serde", feature = "postcard-schema"))]
+impl<H> Schema for SnapshotDiff<'_, H> {
+    const SCHEMA: &'static NamedType = &NamedType {
+        name: "SnapshotDiff",
+        ty: &DataModelType::Tuple(&[
+            SnapshotItemDiff::<'_, u64, u64, H, U32>::SCHEMA,
+            SnapshotItemDiff::<'_, i64, i64, H, U32>::SCHEMA,
+            SnapshotItemDiff::<'_, Float64, Float64, H, U32>::SCHEMA,
+            SnapshotStrDiff::<'_, H, U32>::SCHEMA,
+            SnapshotSliceDiff::<'_, IValue<H>, H, U32>::SCHEMA,
+            SnapshotSliceDiff::<'_, (InternedStrKey<H>, IValue<H>), H, U32>::SCHEMA,
+        ]),
+    };
+}
+
 /// Wrapper to extend a [`Jinterners`] arena incrementally, typically by
 /// deserializing a sequence of serialized [`SnapshotDiff`].
 #[cfg(feature = "serde")]
@@ -973,7 +1007,285 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    #[cfg(feature = "postcard-schema")]
+    use postcard_schema::schema::{DataModelVariant, NamedVariant};
     use serde_json::json;
+
+    #[cfg(feature = "postcard-schema")]
+    #[test]
+    fn test_schemas() {
+        const IVALUE_SCHEMA: &NamedType = &NamedType {
+            name: "IValue",
+            ty: &DataModelType::Enum(&[
+                &NamedVariant {
+                    name: "Null",
+                    ty: &DataModelVariant::UnitVariant,
+                },
+                &NamedVariant {
+                    name: "Bool",
+                    ty: &DataModelVariant::NewtypeVariant(&NamedType {
+                        name: "bool",
+                        ty: &DataModelType::Bool,
+                    }),
+                },
+                &NamedVariant {
+                    name: "U32",
+                    ty: &DataModelVariant::NewtypeVariant(&NamedType {
+                        name: "u32",
+                        ty: &DataModelType::U32,
+                    }),
+                },
+                &NamedVariant {
+                    name: "I32",
+                    ty: &DataModelVariant::NewtypeVariant(&NamedType {
+                        name: "i32",
+                        ty: &DataModelType::I32,
+                    }),
+                },
+                &NamedVariant {
+                    name: "U64",
+                    ty: &DataModelVariant::NewtypeVariant(&NamedType {
+                        name: "Interned",
+                        ty: &DataModelType::NewtypeStruct(&NamedType {
+                            name: "U32",
+                            ty: &DataModelType::Usize,
+                        }),
+                    }),
+                },
+                &NamedVariant {
+                    name: "I64",
+                    ty: &DataModelVariant::NewtypeVariant(&NamedType {
+                        name: "Interned",
+                        ty: &DataModelType::NewtypeStruct(&NamedType {
+                            name: "U32",
+                            ty: &DataModelType::Usize,
+                        }),
+                    }),
+                },
+                &NamedVariant {
+                    name: "F64",
+                    ty: &DataModelVariant::NewtypeVariant(&NamedType {
+                        name: "Interned",
+                        ty: &DataModelType::NewtypeStruct(&NamedType {
+                            name: "U32",
+                            ty: &DataModelType::Usize,
+                        }),
+                    }),
+                },
+                &NamedVariant {
+                    name: "String",
+                    ty: &DataModelVariant::NewtypeVariant(&NamedType {
+                        name: "InternedStr",
+                        ty: &DataModelType::NewtypeStruct(&NamedType {
+                            name: "U32",
+                            ty: &DataModelType::Usize,
+                        }),
+                    }),
+                },
+                &NamedVariant {
+                    name: "Array",
+                    ty: &DataModelVariant::NewtypeVariant(&NamedType {
+                        name: "InternedSlice",
+                        ty: &DataModelType::NewtypeStruct(&NamedType {
+                            name: "U32",
+                            ty: &DataModelType::Usize,
+                        }),
+                    }),
+                },
+                &NamedVariant {
+                    name: "Object",
+                    ty: &DataModelVariant::NewtypeVariant(&NamedType {
+                        name: "InternedSlice",
+                        ty: &DataModelType::NewtypeStruct(&NamedType {
+                            name: "U32",
+                            ty: &DataModelType::Usize,
+                        }),
+                    }),
+                },
+            ]),
+        };
+
+        assert_eq!(
+            Jinterners::<DefaultBuildHasher>::SCHEMA,
+            &NamedType {
+                name: "Jinterners",
+                ty: &DataModelType::Tuple(&[
+                    &NamedType {
+                        name: "Arena",
+                        ty: &DataModelType::Seq(&NamedType {
+                            name: "u64",
+                            ty: &DataModelType::U64
+                        })
+                    },
+                    &NamedType {
+                        name: "Arena",
+                        ty: &DataModelType::Seq(&NamedType {
+                            name: "i64",
+                            ty: &DataModelType::I64
+                        })
+                    },
+                    &NamedType {
+                        name: "Arena",
+                        ty: &DataModelType::Seq(&NamedType {
+                            name: "f64",
+                            ty: &DataModelType::F64
+                        })
+                    },
+                    &NamedType {
+                        name: "ArenaStr",
+                        ty: &DataModelType::Tuple(&[
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "U32",
+                                    ty: &DataModelType::Usize
+                                })
+                            },
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::String
+                            }
+                        ])
+                    },
+                    &NamedType {
+                        name: "ArenaSlice",
+                        ty: &DataModelType::Tuple(&[
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "U32",
+                                    ty: &DataModelType::Usize
+                                })
+                            },
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(IVALUE_SCHEMA)
+                            }
+                        ])
+                    },
+                    &NamedType {
+                        name: "ArenaSlice",
+                        ty: &DataModelType::Tuple(&[
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "U32",
+                                    ty: &DataModelType::Usize
+                                })
+                            },
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "(A, B,)",
+                                    ty: &DataModelType::Tuple(&[
+                                        &NamedType {
+                                            name: "InternedStr",
+                                            ty: &DataModelType::NewtypeStruct(&NamedType {
+                                                name: "U32",
+                                                ty: &DataModelType::Usize
+                                            })
+                                        },
+                                        IVALUE_SCHEMA
+                                    ])
+                                })
+                            }
+                        ])
+                    }
+                ])
+            }
+        );
+
+        #[cfg(feature = "serde")]
+        assert_eq!(
+            SnapshotDiff::<DefaultBuildHasher>::SCHEMA,
+            &NamedType {
+                name: "SnapshotDiff",
+                ty: &DataModelType::Tuple(&[
+                    &NamedType {
+                        name: "SnapshotDiff",
+                        ty: &DataModelType::Seq(&NamedType {
+                            name: "u64",
+                            ty: &DataModelType::U64
+                        })
+                    },
+                    &NamedType {
+                        name: "SnapshotDiff",
+                        ty: &DataModelType::Seq(&NamedType {
+                            name: "i64",
+                            ty: &DataModelType::I64
+                        })
+                    },
+                    &NamedType {
+                        name: "SnapshotDiff",
+                        ty: &DataModelType::Seq(&NamedType {
+                            name: "f64",
+                            ty: &DataModelType::F64
+                        })
+                    },
+                    &NamedType {
+                        name: "SnapshotStrDiff",
+                        ty: &DataModelType::Tuple(&[
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "U32",
+                                    ty: &DataModelType::Usize
+                                })
+                            },
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::String
+                            }
+                        ])
+                    },
+                    &NamedType {
+                        name: "SnapshotSliceDiff",
+                        ty: &DataModelType::Tuple(&[
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "U32",
+                                    ty: &DataModelType::Usize
+                                })
+                            },
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(IVALUE_SCHEMA)
+                            }
+                        ])
+                    },
+                    &NamedType {
+                        name: "SnapshotSliceDiff",
+                        ty: &DataModelType::Tuple(&[
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "U32",
+                                    ty: &DataModelType::Usize
+                                })
+                            },
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "(A, B,)",
+                                    ty: &DataModelType::Tuple(&[
+                                        &NamedType {
+                                            name: "InternedStr",
+                                            ty: &DataModelType::NewtypeStruct(&NamedType {
+                                                name: "U32",
+                                                ty: &DataModelType::Usize
+                                            })
+                                        },
+                                        IVALUE_SCHEMA
+                                    ])
+                                })
+                            }
+                        ])
+                    }
+                ])
+            }
+        );
+    }
 
     #[cfg(feature = "retain")]
     #[test]

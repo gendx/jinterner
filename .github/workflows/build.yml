@@ -30,6 +30,8 @@ jobs:
         run: cargo build --verbose --all --no-default-features --features=delta
       - name: Build (get-size2 feature)
         run: cargo build --verbose --all --no-default-features --features=get-size2
+      - name: Build (postcard-schema feature)
+        run: cargo build --verbose --all --no-default-features --features=postcard-schema
       - name: Build (retain feature)
         run: cargo build --verbose --all --no-default-features --features=retain
       - name: Build (serde feature)
@@ -40,6 +42,6 @@ jobs:
         run: cargo build --verbose --all --no-default-features --features=sync
 
       - name: Build (all features except sync)
-        run: cargo build --verbose --all --no-default-features --features=debug,delta,get-size2,retain,serde,std
+        run: cargo build --verbose --all --no-default-features --features=debug,delta,get-size2,postcard-schema,retain,serde,std
       - name: Build (all features)
         run: cargo build --verbose --all --all-features

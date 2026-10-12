@@ -12,7 +12,7 @@ edition = "2024"
 rust-version = "1.91.0"
 
 [package.metadata.docs.rs]
-features = ["debug", "delta", "get-size2", "retain", "serde", "std", "sync"]
+features = ["debug", "delta", "get-size2", "postcard-schema", "retain", "serde", "std", "sync"]
 rustdoc-args = ["--cfg", "docsrs", "--generate-link-to-definition"]
 
 [features]
@@ -20,6 +20,7 @@ default = ["std", "sync"]
 debug = ["get-size2", "blazinterner/debug"]
 delta = ["blazinterner/delta", "dep:hashbrown"]
 get-size2 = ["dep:get-size2", "blazinterner/get-size2"]
+postcard-schema = ["dep:postcard-schema", "blazinterner/postcard-schema"]
 retain = ["blazinterner/retain"]
 serde = ["dep:serde", "blazinterner/serde", "hashbrown/serde", "ordered-float/serde"]
 std = ["blazinterner/std", "serde_json/std"]
@@ -27,8 +28,9 @@ sync = ["blazinterner/sync"]
 
 [dependencies]
 get-size2 = { optional = true, version = "0.11.1", default-features = false, features = ["derive"] }
-blazinterner = { version = "0.6.1", default-features = false, features = ["raw"] }
+blazinterner = { version = "0.6.2", default-features = false, features = ["raw"] }
 hashbrown = { optional = true, version = "0.17.1" }
 ordered-float = { version = "5.5.0", default-features = false }
+postcard-schema = { optional = true, version = "0.2.5", features = ["derive"] }
 serde = { optional = true, version = "1.0.229", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0.154", default-features = false, features = ["alloc"] }
