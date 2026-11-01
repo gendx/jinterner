@@ -9,7 +9,7 @@ categories = ["caching", "encoding", "memory-management", "concurrency"]
 keywords = ["arena", "interning", "interner", "json"]
 exclude = [".github/*", "data/*"]
 edition = "2024"
-rust-version = "1.91.0"
+rust-version = "1.95.0"
 
 [package.metadata.docs.rs]
 features = ["debug", "delta", "get-size2", "postcard-schema", "retain", "serde", "std", "sync"]
@@ -28,7 +28,7 @@ sync = ["blazinterner/sync"]
 
 [dependencies]
 get-size2 = { optional = true, version = "0.11.1", default-features = false, features = ["derive"] }
-blazinterner = { version = "0.6.2", default-features = false, features = ["raw"] }
+blazinterner = { version = "0.6.3", default-features = false, features = ["raw"] }
 hashbrown = { optional = true, version = "0.17.1" }
 ordered-float = { version = "5.5.1", default-features = false }
 postcard-schema = { optional = true, version = "0.2.5", features = ["derive"] }
