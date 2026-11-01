@@ -41,11 +41,11 @@ pub use delta::DeltaEncoding;
 use detail::Float64;
 #[cfg(all(feature = "serde", feature = "sync"))]
 pub use detail::InterningDeserializer;
+#[cfg(feature = "serde")]
+pub use detail::InterningDeserializerMut;
 pub use detail::mapping::Mapping;
 use detail::mapping::{MappingNoScalars, MappingScalars};
-#[cfg(feature = "serde")]
-pub use detail::{BoundValue, InterningDeserializerMut};
-pub use detail::{IValue, InternedStrKey, MapRef, ValueRef};
+pub use detail::{BoundValue, IValue, InternedStrKey, MapRef, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::{GetSize, GetSizeTracker};
 #[cfg(feature = "postcard-schema")]
