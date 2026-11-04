@@ -352,7 +352,7 @@ where
     /// This function panics if the arena is full. Use
     /// [`try_intern()`](Self::try_intern) for a fallible API.
     #[cfg(feature = "sync")]
-    pub fn intern(&self, source: Value) -> IValue<H> {
+    pub fn intern(&self, source: &Value) -> IValue<H> {
         IValue::from(self, source)
     }
 
@@ -364,35 +364,8 @@ where
     /// efficient if you hold a mutable reference to this [`Jinterners`] arena
     /// as it avoids acquiring locks.
     #[cfg(feature = "sync")]
-    pub fn try_intern(&self, source: Value) -> Option<IValue<H>> {
+    pub fn try_intern(&self, source: &Value) -> Option<IValue<H>> {
         IValue::try_from(self, source)
-    }
-
-    /// Interns the given [`serde_json::Value`] into this arena.
-    ///
-    /// See also [`intern_ref_mut()`](Self::intern_ref_mut), which is more
-    /// efficient if you hold a mutable reference to this [`Jinterners`] arena
-    /// as it avoids acquiring locks.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the arena is full. Use
-    /// [`try_intern_ref()`](Self::try_intern_ref) for a fallible API.
-    #[cfg(feature = "sync")]
-    pub fn intern_ref(&self, source: &Value) -> IValue<H> {
-        IValue::from_ref(self, source)
-    }
-
-    /// Interns the given [`serde_json::Value`] into this arena.
-    ///
-    /// This returns [`None`] if the arena is full.
-    ///
-    /// See also [`try_intern_ref_mut()`](Self::try_intern_ref_mut), which is
-    /// more efficient if you hold a mutable reference to this [`Jinterners`]
-    /// arena as it avoids acquiring locks.
-    #[cfg(feature = "sync")]
-    pub fn try_intern_ref(&self, source: &Value) -> Option<IValue<H>> {
-        IValue::try_from_ref(self, source)
     }
 
     /// Interns the given [`serde_json::Value`] into this arena.
@@ -405,7 +378,7 @@ where
     ///
     /// This function panics if the arena is full. Use
     /// [`try_intern_mut()`](Self::try_intern_mut) for a fallible API.
-    pub fn intern_mut(&mut self, source: Value) -> IValue<H> {
+    pub fn intern_mut(&mut self, source: &Value) -> IValue<H> {
         IValue::from_mut(self, source)
     }
 
@@ -416,33 +389,8 @@ where
     /// Contrary to [`try_intern()`](Self::try_intern), no locks are held
     /// internally because this function already takes an exclusive mutable
     /// reference to this [`Jinterners`] arena.
-    pub fn try_intern_mut(&mut self, source: Value) -> Option<IValue<H>> {
+    pub fn try_intern_mut(&mut self, source: &Value) -> Option<IValue<H>> {
         IValue::try_from_mut(self, source)
-    }
-
-    /// Interns the given [`serde_json::Value`] into this arena.
-    ///
-    /// Contrary to [`intern_ref()`](Self::intern_ref), no locks are held
-    /// internally because this function already takes an exclusive mutable
-    /// reference to this [`Jinterners`] arena.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the arena is full. Use
-    /// [`try_intern_ref_mut()`](Self::try_intern_ref_mut) for a fallible API.
-    pub fn intern_ref_mut(&mut self, source: &Value) -> IValue<H> {
-        IValue::from_ref_mut(self, source)
-    }
-
-    /// Interns the given [`serde_json::Value`] into this arena.
-    ///
-    /// This returns [`None`] if the arena is full.
-    ///
-    /// Contrary to [`try_intern_ref()`](Self::try_intern_ref), no locks are
-    /// held internally because this function already takes an exclusive mutable
-    /// reference to this [`Jinterners`] arena.
-    pub fn try_intern_ref_mut(&mut self, source: &Value) -> Option<IValue<H>> {
-        IValue::try_from_ref_mut(self, source)
     }
 
     /// Retrieves the given interned value from this arena.
@@ -1473,7 +1421,7 @@ mod test {
     fn retain() {
         let mut interners: Jinterners = Jinterners::default();
 
-        let john = interners.intern_mut(json!({
+        let john = interners.intern_mut(&json!({
             "name": "John",
             "surname": "Doe",
             "address": {
@@ -1482,7 +1430,7 @@ mod test {
                 "city": "Big City",
             }
         }));
-        let mary = interners.intern_mut(json!({
+        let mary = interners.intern_mut(&json!({
             "name": "Mary",
             "surname": "Smith",
             "address": {
@@ -1529,8 +1477,8 @@ mod test {
     fn test_optimize_strings() {
         let mut interners: Jinterners = Jinterners::default();
 
-        let mary = interners.intern_mut(json!("Mary"));
-        let john = interners.intern_mut(json!("John"));
+        let mary = interners.intern_mut(&json!("Mary"));
+        let john = interners.intern_mut(&json!("John"));
 
         // No optimization happens with a limit of zero.
         assert!(interners.optimize(Some(0)).is_none());
@@ -1550,8 +1498,8 @@ mod test {
     fn test_optimize_once_strings() {
         let mut interners: Jinterners = Jinterners::default();
 
-        let mary = interners.intern_mut(json!("Mary"));
-        let john = interners.intern_mut(json!("John"));
+        let mary = interners.intern_mut(&json!("Mary"));
+        let john = interners.intern_mut(&json!("John"));
 
         // Optimization sorts strings.
         let (interners, mapping) = interners.optimize_once().unwrap();
@@ -1569,7 +1517,7 @@ mod test {
     fn test_truncate() {
         let mut interners: Jinterners = Jinterners::default();
 
-        let john = interners.intern_mut(json!({
+        let john = interners.intern_mut(&json!({
             "name": "John",
             "surname": "Doe",
             "address": {
@@ -1580,7 +1528,7 @@ mod test {
         }));
         let snapshot = interners.snapshot().mark();
 
-        interners.intern_mut(json!({
+        interners.intern_mut(&json!({
             "name": "Mary",
             "surname": "Smith",
             "address": {

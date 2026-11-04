@@ -876,39 +876,21 @@ where
     }
 
     #[cfg(feature = "sync")]
-    pub(crate) fn from(interners: &Jinterners<H>, source: Value) -> Self {
+    pub(crate) fn from(interners: &Jinterners<H>, source: &Value) -> Self {
         Self(IValueImpl::from(interners, source))
     }
 
     #[cfg(feature = "sync")]
-    pub(crate) fn try_from(interners: &Jinterners<H>, source: Value) -> Option<Self> {
+    pub(crate) fn try_from(interners: &Jinterners<H>, source: &Value) -> Option<Self> {
         IValueImpl::try_from(interners, source).map(Self)
     }
 
-    #[cfg(feature = "sync")]
-    pub(crate) fn from_ref(interners: &Jinterners<H>, source: &Value) -> Self {
-        Self(IValueImpl::from_ref(interners, source))
-    }
-
-    #[cfg(feature = "sync")]
-    pub(crate) fn try_from_ref(interners: &Jinterners<H>, source: &Value) -> Option<Self> {
-        IValueImpl::try_from_ref(interners, source).map(Self)
-    }
-
-    pub(crate) fn from_mut(interners: &mut Jinterners<H>, source: Value) -> Self {
+    pub(crate) fn from_mut(interners: &mut Jinterners<H>, source: &Value) -> Self {
         Self(IValueImpl::from_mut(interners, source))
     }
 
-    pub(crate) fn try_from_mut(interners: &mut Jinterners<H>, source: Value) -> Option<Self> {
+    pub(crate) fn try_from_mut(interners: &mut Jinterners<H>, source: &Value) -> Option<Self> {
         IValueImpl::try_from_mut(interners, source).map(Self)
-    }
-
-    pub(crate) fn from_ref_mut(interners: &mut Jinterners<H>, source: &Value) -> Self {
-        Self(IValueImpl::from_ref_mut(interners, source))
-    }
-
-    pub(crate) fn try_from_ref_mut(interners: &mut Jinterners<H>, source: &Value) -> Option<Self> {
-        IValueImpl::try_from_ref_mut(interners, source).map(Self)
     }
 
     pub(crate) fn lookup(&self, interners: &Jinterners<H>) -> Value {
@@ -1718,74 +1700,7 @@ where
     }
 
     #[cfg(feature = "sync")]
-    fn from(interners: &Jinterners<H>, source: Value) -> Self {
-        match source {
-            Value::Null => IValueImpl::Null,
-            Value::Bool(x) => IValueImpl::Bool(x),
-            Value::Number(x) => {
-                if x.is_u64() {
-                    IValueImpl::u64(interners, x.as_u64().unwrap())
-                } else if x.is_i64() {
-                    IValueImpl::i64(interners, x.as_i64().unwrap())
-                } else {
-                    IValueImpl::f64(interners, x.as_f64().unwrap())
-                }
-            }
-            Value::String(s) => IValueImpl::string(interners, &s),
-            Value::Array(a) => IValueImpl::array(
-                interners,
-                &a.into_iter()
-                    .map(|v| interners.intern(v))
-                    .collect::<Box<[_]>>(),
-            ),
-            Value::Object(o) => IValueImpl::object(
-                interners,
-                &mut o
-                    .into_iter()
-                    .map(|(k, v)| (InternedStrKey::new(interners, &k), interners.intern(v)))
-                    .collect::<Box<[_]>>(),
-            ),
-        }
-    }
-
-    #[cfg(feature = "sync")]
-    fn try_from(interners: &Jinterners<H>, source: Value) -> Option<Self> {
-        match source {
-            Value::Null => Some(IValueImpl::Null),
-            Value::Bool(x) => Some(IValueImpl::Bool(x)),
-            Value::Number(x) => {
-                if x.is_u64() {
-                    IValueImpl::try_u64(interners, x.as_u64().unwrap())
-                } else if x.is_i64() {
-                    IValueImpl::try_i64(interners, x.as_i64().unwrap())
-                } else {
-                    IValueImpl::try_f64(interners, x.as_f64().unwrap())
-                }
-            }
-            Value::String(s) => IValueImpl::try_string(interners, &s),
-            Value::Array(a) => IValueImpl::try_array(
-                interners,
-                &a.into_iter()
-                    .map(|v| interners.try_intern(v))
-                    .collect::<Option<Box<[_]>>>()?,
-            ),
-            Value::Object(o) => IValueImpl::try_object(
-                interners,
-                &mut o
-                    .into_iter()
-                    .map(|(k, v)| {
-                        Some((
-                            InternedStrKey::try_new(interners, &k)?,
-                            interners.try_intern(v)?,
-                        ))
-                    })
-                    .collect::<Option<Box<[_]>>>()?,
-            ),
-        }
-    }
-
-    #[cfg(feature = "sync")]
-    fn from_ref(interners: &Jinterners<H>, source: &Value) -> Self {
+    fn from(interners: &Jinterners<H>, source: &Value) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
             Value::Bool(x) => IValueImpl::Bool(*x),
@@ -1801,9 +1716,7 @@ where
             Value::String(s) => IValueImpl::string(interners, s.as_str()),
             Value::Array(a) => IValueImpl::array(
                 interners,
-                &a.iter()
-                    .map(|v| interners.intern_ref(v))
-                    .collect::<Box<[_]>>(),
+                &a.iter().map(|v| interners.intern(v)).collect::<Box<[_]>>(),
             ),
             Value::Object(o) => IValueImpl::object(
                 interners,
@@ -1812,7 +1725,7 @@ where
                     .map(|(k, v)| {
                         (
                             InternedStrKey::new(interners, k.as_str()),
-                            interners.intern_ref(v),
+                            interners.intern(v),
                         )
                     })
                     .collect::<Box<[_]>>(),
@@ -1821,7 +1734,7 @@ where
     }
 
     #[cfg(feature = "sync")]
-    fn try_from_ref(interners: &Jinterners<H>, source: &Value) -> Option<Self> {
+    fn try_from(interners: &Jinterners<H>, source: &Value) -> Option<Self> {
         match source {
             Value::Null => Some(IValueImpl::Null),
             Value::Bool(x) => Some(IValueImpl::Bool(*x)),
@@ -1838,7 +1751,7 @@ where
             Value::Array(a) => IValueImpl::try_array(
                 interners,
                 &a.iter()
-                    .map(|v| interners.try_intern_ref(v))
+                    .map(|v| interners.try_intern(v))
                     .collect::<Option<Box<[_]>>>()?,
             ),
             Value::Object(o) => IValueImpl::try_object(
@@ -1848,7 +1761,7 @@ where
                     .map(|(k, v)| {
                         Some((
                             InternedStrKey::try_new(interners, k.as_str())?,
-                            interners.try_intern_ref(v)?,
+                            interners.try_intern(v)?,
                         ))
                     })
                     .collect::<Option<Box<[_]>>>()?,
@@ -1856,79 +1769,7 @@ where
         }
     }
 
-    fn from_mut(interners: &mut Jinterners<H>, source: Value) -> Self {
-        match source {
-            Value::Null => IValueImpl::Null,
-            Value::Bool(x) => IValueImpl::Bool(x),
-            Value::Number(x) => {
-                if x.is_u64() {
-                    IValueImpl::u64_mut(interners, x.as_u64().unwrap())
-                } else if x.is_i64() {
-                    IValueImpl::i64_mut(interners, x.as_i64().unwrap())
-                } else {
-                    IValueImpl::f64_mut(interners, x.as_f64().unwrap())
-                }
-            }
-            Value::String(s) => IValueImpl::string_mut(interners, &s),
-            Value::Array(a) => {
-                let a = a
-                    .into_iter()
-                    .map(|v| interners.intern_mut(v))
-                    .collect::<Box<[_]>>();
-                IValueImpl::array_mut(interners, &a)
-            }
-            Value::Object(o) => {
-                let mut o = o
-                    .into_iter()
-                    .map(|(k, v)| {
-                        (
-                            InternedStrKey::new_mut(interners, &k),
-                            interners.intern_mut(v),
-                        )
-                    })
-                    .collect::<Box<[_]>>();
-                IValueImpl::object_mut(interners, &mut o)
-            }
-        }
-    }
-
-    fn try_from_mut(interners: &mut Jinterners<H>, source: Value) -> Option<Self> {
-        match source {
-            Value::Null => Some(IValueImpl::Null),
-            Value::Bool(x) => Some(IValueImpl::Bool(x)),
-            Value::Number(x) => {
-                if x.is_u64() {
-                    IValueImpl::try_u64_mut(interners, x.as_u64().unwrap())
-                } else if x.is_i64() {
-                    IValueImpl::try_i64_mut(interners, x.as_i64().unwrap())
-                } else {
-                    IValueImpl::try_f64_mut(interners, x.as_f64().unwrap())
-                }
-            }
-            Value::String(s) => IValueImpl::try_string_mut(interners, &s),
-            Value::Array(a) => {
-                let a: Box<[_]> = a
-                    .into_iter()
-                    .map(|v| interners.try_intern_mut(v))
-                    .collect::<Option<_>>()?;
-                IValueImpl::try_array_mut(interners, &a)
-            }
-            Value::Object(o) => {
-                let mut o = o
-                    .into_iter()
-                    .map(|(k, v)| {
-                        Some((
-                            InternedStrKey::try_new_mut(interners, &k)?,
-                            interners.try_intern_mut(v)?,
-                        ))
-                    })
-                    .collect::<Option<Box<[_]>>>()?;
-                IValueImpl::try_object_mut(interners, &mut o)
-            }
-        }
-    }
-
-    fn from_ref_mut(interners: &mut Jinterners<H>, source: &Value) -> Self {
+    fn from_mut(interners: &mut Jinterners<H>, source: &Value) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
             Value::Bool(x) => IValueImpl::Bool(*x),
@@ -1945,7 +1786,7 @@ where
             Value::Array(a) => {
                 let a = a
                     .iter()
-                    .map(|v| interners.intern_ref_mut(v))
+                    .map(|v| interners.intern_mut(v))
                     .collect::<Box<[_]>>();
                 IValueImpl::array_mut(interners, &a)
             }
@@ -1955,7 +1796,7 @@ where
                     .map(|(k, v)| {
                         (
                             InternedStrKey::new_mut(interners, k.as_str()),
-                            interners.intern_ref_mut(v),
+                            interners.intern_mut(v),
                         )
                     })
                     .collect::<Box<[_]>>();
@@ -1964,7 +1805,7 @@ where
         }
     }
 
-    fn try_from_ref_mut(interners: &mut Jinterners<H>, source: &Value) -> Option<Self> {
+    fn try_from_mut(interners: &mut Jinterners<H>, source: &Value) -> Option<Self> {
         match source {
             Value::Null => Some(IValueImpl::Null),
             Value::Bool(x) => Some(IValueImpl::Bool(*x)),
@@ -1981,7 +1822,7 @@ where
             Value::Array(a) => {
                 let a: Box<[_]> = a
                     .iter()
-                    .map(|v| interners.try_intern_ref_mut(v))
+                    .map(|v| interners.try_intern_mut(v))
                     .collect::<Option<_>>()?;
                 IValueImpl::try_array_mut(interners, &a)
             }
@@ -1991,7 +1832,7 @@ where
                     .map(|(k, v)| {
                         Some((
                             InternedStrKey::try_new_mut(interners, k.as_str())?,
-                            interners.try_intern_ref_mut(v)?,
+                            interners.try_intern_mut(v)?,
                         ))
                     })
                     .collect::<Option<Box<[_]>>>()?;
@@ -2716,7 +2557,7 @@ mod serde_test {
                 "world": {"Second": [42, -123]},
             }
         });
-        let ivalue = interners.intern_mut(json);
+        let ivalue = interners.intern_mut(&json);
 
         let small_foo: SmallFoo = ivalue
             .to_value(&interners)
