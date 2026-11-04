@@ -2,8 +2,8 @@ use super::{BoundValue, IValue, IValueImpl, InternedStrKey};
 use crate::{Buffer, BufferPool, Jinterners};
 use core::hash::BuildHasher;
 use serde::ser::{
-    Error as _, Impossible, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
-    SerializeTuple, SerializeTupleStruct, SerializeTupleVariant,
+    Error as SerError, Impossible, SerializeMap, SerializeSeq, SerializeStruct,
+    SerializeStructVariant, SerializeTuple, SerializeTupleStruct, SerializeTupleVariant,
 };
 use serde::{Serialize, Serializer};
 use serde_json::error::Error;
@@ -47,7 +47,9 @@ where
     }
 
     fn serialize_i64(self, value: i64) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::i64(self.interners, value))
+        IValueImpl::try_i64(self.interners, value).ok_or(Error::custom(
+            "Arena<i64> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_u8(self, value: u8) -> Result<Self::Ok, Self::Error> {
@@ -63,15 +65,19 @@ where
     }
 
     fn serialize_u64(self, value: u64) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::u64(self.interners, value))
+        IValueImpl::try_u64(self.interners, value).ok_or(Error::custom(
+            "Arena<u64> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_f32(self, value: f32) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::f64(self.interners, value.into()))
+        self.serialize_f64(value.into())
     }
 
     fn serialize_f64(self, value: f64) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::f64(self.interners, value))
+        IValueImpl::try_f64(self.interners, value).ok_or(Error::custom(
+            "Arena<f64> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_char(self, value: char) -> Result<Self::Ok, Self::Error> {
@@ -81,7 +87,9 @@ where
     }
 
     fn serialize_str(self, value: &str) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::String(self.interners.string.intern(value)))
+        IValueImpl::try_string(self.interners, value).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_bytes(self, value: &[u8]) -> Result<Self::Ok, Self::Error> {
@@ -91,7 +99,10 @@ where
             .map(|byte| IValue(IValueImpl::U32((*byte as u32).to_ne_bytes())));
         // SAFETY: The iterator length is trusted, as it's a simple mapping on a
         // slice iterator.
-        let index = unsafe { self.interners.iarray.intern_iter(iter) };
+        let index = unsafe { self.interners.iarray.try_intern_iter(iter) };
+        let index = index.ok_or(Error::custom(
+            "Arena<array> is full, cannot push more values to it",
+        ))?;
         Ok(IValueImpl::Array(index))
     }
 
@@ -144,15 +155,15 @@ where
     where
         T: ?Sized + Serialize,
     {
-        let object = [(
-            InternedStrKey(self.interners.string.intern(variant)),
-            IValue(value.serialize(ValueSerializer {
-                interners: self.interners,
-                buffers: self.buffers,
-            })?),
-        )];
-        Ok(IValueImpl::Object(
-            self.interners.iobject.intern_array(object),
+        let key = InternedStrKey::try_new(self.interners, variant).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))?;
+        let value = IValue(value.serialize(ValueSerializer {
+            interners: self.interners,
+            buffers: self.buffers,
+        })?);
+        IValueImpl::try_singleton(self.interners, key, value).ok_or(Error::custom(
+            "Arena<object> is full, cannot push more values to it",
         ))
     }
 
@@ -255,9 +266,11 @@ where
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        let iarray = self.interners.iarray.intern_copy(&self.array);
+        let ivalue = IValueImpl::try_array(self.interners, &self.array).ok_or(Error::custom(
+            "Arena<array> is full, cannot push more values to it",
+        ))?;
         self.buffers.push_array(self.array);
-        Ok(IValueImpl::Array(iarray))
+        Ok(ivalue)
     }
 }
 
@@ -329,15 +342,16 @@ where
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        let key = InternedStrKey(self.interners.string.intern(self.variant));
-        let value = IValue(IValueImpl::Array(
-            self.interners.iarray.intern_copy(&self.array),
-        ));
+        let key = InternedStrKey::try_new(self.interners, self.variant).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))?;
+        let value = IValue(IValueImpl::try_array(self.interners, &self.array).ok_or(
+            Error::custom("Arena<array> is full, cannot push more values to it"),
+        )?);
         self.buffers.push_array(self.array);
 
-        let object = [(key, value)];
-        Ok(IValueImpl::Object(
-            self.interners.iobject.intern_array(object),
+        IValueImpl::try_singleton(self.interners, key, value).ok_or(Error::custom(
+            "Arena<object> is full, cannot push more values to it",
         ))
     }
 }
@@ -399,10 +413,11 @@ where
         if self.key.is_some() {
             panic!("missing serialize_value call after serialize_key");
         }
-        self.object.sort_unstable_by_key(|(k, _)| *k);
-        let iobject = self.interners.iobject.intern_copy(&self.object);
+        let ivalue = IValueImpl::try_object(self.interners, &mut self.object).ok_or(
+            Error::custom("Arena<object> is full, cannot push more values to it"),
+        )?;
         self.buffers.push_object(self.object);
-        Ok(IValueImpl::Object(iobject))
+        Ok(ivalue)
     }
 }
 
@@ -447,7 +462,9 @@ where
         T: ?Sized + Serialize,
     {
         self.object.push((
-            InternedStrKey(self.interners.string.intern(key)),
+            InternedStrKey::try_new(self.interners, key).ok_or(Error::custom(
+                "Arena<string> is full, cannot push more values to it",
+            ))?,
             IValue(value.serialize(ValueSerializer {
                 interners: self.interners,
                 buffers: self.buffers,
@@ -457,17 +474,17 @@ where
     }
 
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        let key = InternedStrKey(self.interners.string.intern(self.variant));
-
-        self.object.sort_unstable_by_key(|(k, _)| *k);
-        let value = IValue(IValueImpl::Object(
-            self.interners.iobject.intern_copy(&self.object),
-        ));
+        let key = InternedStrKey::try_new(self.interners, self.variant).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))?;
+        let value = IValue(
+            IValueImpl::try_object(self.interners, &mut self.object).ok_or(Error::custom(
+                "Arena<object> is full, cannot push more values to it",
+            ))?,
+        );
         self.buffers.push_object(self.object);
-
-        let object = [(key, value)];
-        Ok(IValueImpl::Object(
-            self.interners.iobject.intern_array(object),
+        IValueImpl::try_singleton(self.interners, key, value).ok_or(Error::custom(
+            "Arena<object> is full, cannot push more values to it",
         ))
     }
 }
@@ -553,7 +570,9 @@ where
     }
 
     fn serialize_str(self, value: &str) -> Result<Self::Ok, Self::Error> {
-        Ok(InternedStrKey(self.interners.string.intern(value)))
+        InternedStrKey::try_new(self.interners, value).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_bytes(self, _value: &[u8]) -> Result<Self::Ok, Self::Error> {
@@ -585,7 +604,9 @@ where
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        Ok(InternedStrKey(self.interners.string.intern(variant)))
+        InternedStrKey::try_new(self.interners, variant).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_newtype_struct<T>(
@@ -698,7 +719,9 @@ where
     }
 
     fn serialize_i64(self, value: i64) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::i64_mut(self.interners, value))
+        IValueImpl::try_i64_mut(self.interners, value).ok_or(Error::custom(
+            "Arena<i64> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_u8(self, value: u8) -> Result<Self::Ok, Self::Error> {
@@ -714,15 +737,19 @@ where
     }
 
     fn serialize_u64(self, value: u64) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::u64_mut(self.interners, value))
+        IValueImpl::try_u64_mut(self.interners, value).ok_or(Error::custom(
+            "Arena<u64> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_f32(self, value: f32) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::f64_mut(self.interners, value.into()))
+        self.serialize_f64(value.into())
     }
 
     fn serialize_f64(self, value: f64) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::f64_mut(self.interners, value))
+        IValueImpl::try_f64_mut(self.interners, value).ok_or(Error::custom(
+            "Arena<f64> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_char(self, value: char) -> Result<Self::Ok, Self::Error> {
@@ -732,7 +759,9 @@ where
     }
 
     fn serialize_str(self, value: &str) -> Result<Self::Ok, Self::Error> {
-        Ok(IValueImpl::String(self.interners.string.intern_mut(value)))
+        IValueImpl::try_string_mut(self.interners, value).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_bytes(self, value: &[u8]) -> Result<Self::Ok, Self::Error> {
@@ -742,7 +771,10 @@ where
             .map(|byte| IValue(IValueImpl::U32((*byte as u32).to_ne_bytes())));
         // SAFETY: The iterator length is trusted, as it's a simple mapping on a
         // slice iterator.
-        let index = unsafe { self.interners.iarray.intern_iter_mut(iter) };
+        let index = unsafe { self.interners.iarray.try_intern_iter_mut(iter) };
+        let index = index.ok_or(Error::custom(
+            "Arena<array> is full, cannot push more values to it",
+        ))?;
         Ok(IValueImpl::Array(index))
     }
 
@@ -795,15 +827,15 @@ where
     where
         T: ?Sized + Serialize,
     {
-        let object = [(
-            InternedStrKey(self.interners.string.intern_mut(variant)),
-            IValue(value.serialize(ValueSerializerMut {
-                interners: self.interners,
-                buffers: self.buffers,
-            })?),
-        )];
-        Ok(IValueImpl::Object(
-            self.interners.iobject.intern_array_mut(object),
+        let key = InternedStrKey::try_new_mut(self.interners, variant).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))?;
+        let value = IValue(value.serialize(ValueSerializerMut {
+            interners: self.interners,
+            buffers: self.buffers,
+        })?);
+        IValueImpl::try_singleton_mut(self.interners, key, value).ok_or(Error::custom(
+            "Arena<object> is full, cannot push more values to it",
         ))
     }
 
@@ -904,9 +936,11 @@ where
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        let iarray = self.interners.iarray.intern_copy_mut(&self.array);
+        let ivalue = IValueImpl::try_array_mut(self.interners, &self.array).ok_or(
+            Error::custom("Arena<array> is full, cannot push more values to it"),
+        )?;
         self.buffers.push_array(self.array);
-        Ok(IValueImpl::Array(iarray))
+        Ok(ivalue)
     }
 }
 
@@ -974,15 +1008,18 @@ where
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        let key = InternedStrKey(self.interners.string.intern_mut(self.variant));
-        let value = IValue(IValueImpl::Array(
-            self.interners.iarray.intern_copy_mut(&self.array),
-        ));
+        let key = InternedStrKey::try_new_mut(self.interners, self.variant).ok_or(
+            Error::custom("Arena<string> is full, cannot push more values to it"),
+        )?;
+        let value = IValue(
+            IValueImpl::try_array_mut(self.interners, &self.array).ok_or(Error::custom(
+                "Arena<array> is full, cannot push more values to it",
+            ))?,
+        );
         self.buffers.push_array(self.array);
 
-        let object = [(key, value)];
-        Ok(IValueImpl::Object(
-            self.interners.iobject.intern_array_mut(object),
+        IValueImpl::try_singleton_mut(self.interners, key, value).ok_or(Error::custom(
+            "Arena<object> is full, cannot push more values to it",
         ))
     }
 }
@@ -1042,10 +1079,11 @@ where
         if self.key.is_some() {
             panic!("missing serialize_value call after serialize_key");
         }
-        self.object.sort_unstable_by_key(|(k, _)| *k);
-        let iobject = self.interners.iobject.intern_copy_mut(&self.object);
+        let ivalue = IValueImpl::try_object_mut(self.interners, &mut self.object).ok_or(
+            Error::custom("Arena<object> is full, cannot push more values to it"),
+        )?;
         self.buffers.push_object(self.object);
-        Ok(IValueImpl::Object(iobject))
+        Ok(ivalue)
     }
 }
 
@@ -1087,7 +1125,9 @@ where
         T: ?Sized + Serialize,
     {
         self.object.push((
-            InternedStrKey(self.interners.string.intern_mut(key)),
+            InternedStrKey::try_new_mut(self.interners, key).ok_or(Error::custom(
+                "Arena<string> is full, cannot push more values to it",
+            ))?,
             IValue(value.serialize(ValueSerializerMut {
                 interners: self.interners,
                 buffers: self.buffers,
@@ -1097,17 +1137,17 @@ where
     }
 
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        let key = InternedStrKey(self.interners.string.intern_mut(self.variant));
-
-        self.object.sort_unstable_by_key(|(k, _)| *k);
-        let value = IValue(IValueImpl::Object(
-            self.interners.iobject.intern_copy_mut(&self.object),
-        ));
+        let key = InternedStrKey::try_new_mut(self.interners, self.variant).ok_or(
+            Error::custom("Arena<string> is full, cannot push more values to it"),
+        )?;
+        let value = IValue(
+            IValueImpl::try_object_mut(self.interners, &mut self.object).ok_or(Error::custom(
+                "Arena<object> is full, cannot push more values to it",
+            ))?,
+        );
         self.buffers.push_object(self.object);
-
-        let object = [(key, value)];
-        Ok(IValueImpl::Object(
-            self.interners.iobject.intern_array_mut(object),
+        IValueImpl::try_singleton_mut(self.interners, key, value).ok_or(Error::custom(
+            "Arena<object> is full, cannot push more values to it",
         ))
     }
 }
@@ -1190,7 +1230,9 @@ where
     }
 
     fn serialize_str(self, value: &str) -> Result<Self::Ok, Self::Error> {
-        Ok(InternedStrKey(self.interners.string.intern_mut(value)))
+        InternedStrKey::try_new_mut(self.interners, value).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_bytes(self, _value: &[u8]) -> Result<Self::Ok, Self::Error> {
@@ -1222,7 +1264,9 @@ where
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        Ok(InternedStrKey(self.interners.string.intern_mut(variant)))
+        InternedStrKey::try_new_mut(self.interners, variant).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_newtype_struct<T>(
@@ -1308,12 +1352,39 @@ impl<'a, H> Serialize for BoundValue<'a, H> {
             IValueImpl::Bool(x) => serializer.serialize_bool(*x),
             IValueImpl::U32(x) => serializer.serialize_u32(u32::from_ne_bytes(*x)),
             IValueImpl::I32(x) => serializer.serialize_i32(i32::from_ne_bytes(*x)),
-            IValueImpl::U64(x) => serializer.serialize_u64(self.interners.uint64.lookup(*x)),
-            IValueImpl::I64(x) => serializer.serialize_i64(self.interners.int64.lookup(*x)),
-            IValueImpl::F64(x) => serializer.serialize_f64(self.interners.float64.lookup(*x).0.0),
-            IValueImpl::String(s) => serializer.serialize_str(self.interners.string.lookup(*s)),
+            IValueImpl::U64(x) => {
+                serializer.serialize_u64(self.interners.uint64.try_lookup(*x).ok_or(
+                    SerError::custom("Interned<u64> is out of bounds for this arena"),
+                )?)
+            }
+            IValueImpl::I64(x) => {
+                serializer.serialize_i64(self.interners.int64.try_lookup(*x).ok_or(
+                    SerError::custom("Interned<i64> is out of bounds for this arena"),
+                )?)
+            }
+            IValueImpl::F64(x) => serializer.serialize_f64(
+                self.interners
+                    .float64
+                    .try_lookup(*x)
+                    .ok_or(SerError::custom(
+                        "Interned<f64> is out of bounds for this arena",
+                    ))?
+                    .0
+                    .0,
+            ),
+            IValueImpl::String(s) => {
+                serializer.serialize_str(self.interners.string.try_lookup(*s).ok_or(
+                    SerError::custom("Interned<string> is out of bounds for this arena"),
+                )?)
+            }
             IValueImpl::Array(a) => {
-                let array = self.interners.iarray.lookup(*a);
+                let array = self
+                    .interners
+                    .iarray
+                    .try_lookup(*a)
+                    .ok_or(SerError::custom(
+                        "Interned<array> is out of bounds for this arena",
+                    ))?;
                 serializer.collect_seq(
                     array
                         .iter()
@@ -1321,13 +1392,27 @@ impl<'a, H> Serialize for BoundValue<'a, H> {
                 )
             }
             IValueImpl::Object(o) => {
-                let object = self.interners.iobject.lookup(*o);
-                serializer.collect_map(object.iter().map(|(key, value)| {
-                    (
-                        self.interners.string.lookup(key.0),
-                        BoundValue::new(value, self.interners),
-                    )
-                }))
+                let object = self
+                    .interners
+                    .iobject
+                    .try_lookup(*o)
+                    .ok_or(SerError::custom(
+                        "Interned<object> is out of bounds for this arena",
+                    ))?;
+
+                let mut map = serializer.serialize_map(Some(object.len()))?;
+                for (key, value) in object.iter() {
+                    map.serialize_entry(
+                        self.interners
+                            .string
+                            .try_lookup(key.0)
+                            .ok_or(SerError::custom(
+                                "Interned<string> is out of bounds for this arena",
+                            ))?,
+                        &BoundValue::new(value, self.interners),
+                    )?;
+                }
+                map.end()
             }
         }
     }

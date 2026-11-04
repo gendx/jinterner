@@ -334,6 +334,29 @@ impl<'de, H> Deserialize<'de> for InternedStrKey<H> {
     }
 }
 
+impl<H> InternedStrKey<H>
+where
+    H: BuildHasher,
+{
+    #[cfg(feature = "sync")]
+    pub(crate) fn new(interners: &Jinterners<H>, s: &str) -> Self {
+        Self(interners.string.intern(s))
+    }
+
+    #[cfg(feature = "sync")]
+    pub(crate) fn try_new(interners: &Jinterners<H>, s: &str) -> Option<Self> {
+        interners.string.try_intern(s).map(Self)
+    }
+
+    pub(crate) fn new_mut(interners: &mut Jinterners<H>, s: &str) -> Self {
+        Self(interners.string.intern_mut(s))
+    }
+
+    pub(crate) fn try_new_mut(interners: &mut Jinterners<H>, s: &str) -> Option<Self> {
+        interners.string.try_intern_mut(s).map(Self)
+    }
+}
+
 /// An interned JSON value.
 pub struct IValue<H = DefaultBuildHasher>(IValueImpl<H>);
 
@@ -450,6 +473,11 @@ where
     /// See also [`u64_mut()`](Self::u64_mut), which is more efficient if you
     /// hold a mutable reference to the [`Jinterners`] arena as it avoids
     /// acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_u64()`](Self::try_u64) for a fallible API.
     #[cfg(feature = "sync")]
     pub fn u64(interners: &Jinterners<H>, x: u64) -> Self {
         Self(IValueImpl::u64(interners, x))
@@ -457,11 +485,39 @@ where
 
     /// Interns an integer JSON value.
     ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`try_u64_mut()`](Self::try_u64_mut), which is more efficient
+    /// if you hold a mutable reference to the [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_u64(interners: &Jinterners<H>, x: u64) -> Option<Self> {
+        IValueImpl::try_u64(interners, x).map(Self)
+    }
+
+    /// Interns an integer JSON value.
+    ///
     /// Contrary to [`u64()`](Self::u64), no locks are held internally because
     /// this function already takes an exclusive mutable reference to the
     /// [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_u64_mut()`](Self::try_u64_mut) for a fallible API.
     pub fn u64_mut(interners: &mut Jinterners<H>, x: u64) -> Self {
         Self(IValueImpl::u64_mut(interners, x))
+    }
+
+    /// Interns an integer JSON value.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_u64()`](Self::try_u64), no locks are held internally
+    /// because this function already takes an exclusive mutable reference to
+    /// the [`Jinterners`] arena.
+    pub fn try_u64_mut(interners: &mut Jinterners<H>, x: u64) -> Option<Self> {
+        IValueImpl::try_u64_mut(interners, x).map(Self)
     }
 
     /// Interns an integer JSON value.
@@ -469,6 +525,11 @@ where
     /// See also [`i64_mut()`](Self::i64_mut), which is more efficient if you
     /// hold a mutable reference to the [`Jinterners`] arena as it avoids
     /// acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_i64()`](Self::try_i64) for a fallible API.
     #[cfg(feature = "sync")]
     pub fn i64(interners: &Jinterners<H>, x: i64) -> Self {
         Self(IValueImpl::i64(interners, x))
@@ -476,11 +537,39 @@ where
 
     /// Interns an integer JSON value.
     ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`try_i64_mut()`](Self::try_i64_mut), which is more efficient
+    /// if you hold a mutable reference to the [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_i64(interners: &Jinterners<H>, x: i64) -> Option<Self> {
+        IValueImpl::try_i64(interners, x).map(Self)
+    }
+
+    /// Interns an integer JSON value.
+    ///
     /// Contrary to [`i64()`](Self::i64), no locks are held internally because
     /// this function already takes an exclusive mutable reference to the
     /// [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_i64_mut()`](Self::try_i64_mut) for a fallible API.
     pub fn i64_mut(interners: &mut Jinterners<H>, x: i64) -> Self {
         Self(IValueImpl::i64_mut(interners, x))
+    }
+
+    /// Interns an integer JSON value.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_i64()`](Self::try_i64), no locks are held internally
+    /// because this function already takes an exclusive mutable reference to
+    /// the [`Jinterners`] arena.
+    pub fn try_i64_mut(interners: &mut Jinterners<H>, x: i64) -> Option<Self> {
+        IValueImpl::try_i64_mut(interners, x).map(Self)
     }
 
     /// Interns a floating-point JSON value.
@@ -488,6 +577,11 @@ where
     /// See also [`f64_mut()`](Self::f64_mut), which is more efficient if you
     /// hold a mutable reference to the [`Jinterners`] arena as it avoids
     /// acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_f64_mut()`](Self::try_f64_mut) for a fallible API.
     #[cfg(feature = "sync")]
     pub fn f64(interners: &Jinterners<H>, x: f64) -> Self {
         Self(IValueImpl::f64(interners, x))
@@ -495,11 +589,39 @@ where
 
     /// Interns a floating-point JSON value.
     ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`try_f64_mut()`](Self::try_f64_mut), which is more efficient
+    /// if you hold a mutable reference to the [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_f64(interners: &Jinterners<H>, x: f64) -> Option<Self> {
+        IValueImpl::try_f64(interners, x).map(Self)
+    }
+
+    /// Interns a floating-point JSON value.
+    ///
     /// Contrary to [`f64()`](Self::f64), no locks are held internally because
     /// this function already takes an exclusive mutable reference to the
     /// [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_f64_mut()`](Self::try_f64_mut) for a fallible API.
     pub fn f64_mut(interners: &mut Jinterners<H>, x: f64) -> Self {
         Self(IValueImpl::f64_mut(interners, x))
+    }
+
+    /// Interns a floating-point JSON value.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_f64()`](Self::try_f64), no locks are held internally
+    /// because this function already takes an exclusive mutable reference to
+    /// the [`Jinterners`] arena.
+    pub fn try_f64_mut(interners: &mut Jinterners<H>, x: f64) -> Option<Self> {
+        IValueImpl::try_f64_mut(interners, x).map(Self)
     }
 
     /// Interns a string JSON value.
@@ -507,9 +629,26 @@ where
     /// See also [`string_mut()`](Self::string_mut), which is more efficient if
     /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
     /// acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_string()`](Self::try_string) for a fallible API.
     #[cfg(feature = "sync")]
     pub fn string(interners: &Jinterners<H>, s: &str) -> Self {
-        Self(IValueImpl::String(interners.string.intern(s)))
+        Self(IValueImpl::string(interners, s))
+    }
+
+    /// Interns an string JSON value.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`try_string_mut()`](Self::try_string_mut), which is more
+    /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
+    /// it avoids acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_string(interners: &Jinterners<H>, s: &str) -> Option<Self> {
+        IValueImpl::try_string(interners, s).map(Self)
     }
 
     /// Interns a string JSON value.
@@ -517,8 +656,24 @@ where
     /// Contrary to [`string()`](Self::string), no locks are held internally
     /// because this function already takes an exclusive mutable reference to
     /// the [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_string_mut()`](Self::try_string_mut) for a fallible API.
     pub fn string_mut(interners: &mut Jinterners<H>, s: &str) -> Self {
-        Self(IValueImpl::String(interners.string.intern_mut(s)))
+        Self(IValueImpl::string_mut(interners, s))
+    }
+
+    /// Interns a string JSON value.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_string()`](Self::try_string), no locks are held
+    /// internally because this function already takes an exclusive mutable
+    /// reference to the [`Jinterners`] arena.
+    pub fn try_string_mut(interners: &mut Jinterners<H>, s: &str) -> Option<Self> {
+        IValueImpl::try_string_mut(interners, s).map(Self)
     }
 
     /// Interns a JSON array, whose items are already interned.
@@ -526,9 +681,26 @@ where
     /// See also [`array_mut()`](Self::array_mut), which is more efficient if
     /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
     /// acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_array()`](Self::try_array) for a fallible API.
     #[cfg(feature = "sync")]
     pub fn array(interners: &Jinterners<H>, a: &[Self]) -> Self {
-        Self(IValueImpl::Array(interners.iarray.intern_copy(a)))
+        Self(IValueImpl::array(interners, a))
+    }
+
+    /// Interns a JSON array, whose items are already interned.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`try_array_mut()`](Self::try_array_mut), which is more
+    /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
+    /// it avoids acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_array(interners: &Jinterners<H>, a: &[Self]) -> Option<Self> {
+        IValueImpl::try_array(interners, a).map(Self)
     }
 
     /// Interns a JSON array, whose items are already interned.
@@ -536,8 +708,24 @@ where
     /// Contrary to [`array()`](Self::array), no locks are held internally
     /// because this function already takes an exclusive mutable reference to
     /// the [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_array_mut()`](Self::try_array_mut) for a fallible API.
     pub fn array_mut(interners: &mut Jinterners<H>, a: &[Self]) -> Self {
-        Self(IValueImpl::Array(interners.iarray.intern_copy_mut(a)))
+        Self(IValueImpl::array_mut(interners, a))
+    }
+
+    /// Interns a JSON array, whose items are already interned.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_array()`](Self::try_array), no locks are held
+    /// internally because this function already takes an exclusive mutable
+    /// reference to the [`Jinterners`] arena.
+    pub fn try_array_mut(interners: &mut Jinterners<H>, a: &[Self]) -> Option<Self> {
+        IValueImpl::try_array_mut(interners, a).map(Self)
     }
 
     /// Interns a JSON object, whose values are already interned.
@@ -545,13 +733,40 @@ where
     /// See also [`object_mut()`](Self::object_mut), which is more efficient if
     /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
     /// acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_object()`](Self::try_object) for a fallible API.
     #[cfg(feature = "sync")]
     pub fn object<'a>(interners: &Jinterners<H>, o: impl Iterator<Item = (&'a str, Self)>) -> Self {
-        let mut io: Box<[_]> = o
-            .map(|(k, v)| (InternedStrKey(interners.string.intern(k)), v))
-            .collect();
-        io.sort_unstable_by_key(|(k, _)| *k);
-        Self(IValueImpl::Object(interners.iobject.intern_copy(&io)))
+        Self(IValueImpl::object(
+            interners,
+            &mut o
+                .map(|(k, v)| (InternedStrKey::new(interners, k), v))
+                .collect::<Box<[_]>>(),
+        ))
+    }
+
+    /// Interns a JSON object, whose values are already interned.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`try_object_mut()`](Self::try_object_mut), which is more
+    /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
+    /// it avoids acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_object<'a>(
+        interners: &Jinterners<H>,
+        o: impl Iterator<Item = (&'a str, Self)>,
+    ) -> Option<Self> {
+        IValueImpl::try_object(
+            interners,
+            &mut o
+                .map(|(k, v)| Some((InternedStrKey::try_new(interners, k)?, v)))
+                .collect::<Option<Box<[_]>>>()?,
+        )
+        .map(Self)
     }
 
     /// Interns a JSON object, whose values are already interned.
@@ -559,15 +774,36 @@ where
     /// Contrary to [`object()`](Self::object), no locks are held internally
     /// because this function already takes an exclusive mutable reference to
     /// the [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_object_mut()`](Self::try_object_mut) for a fallible API.
     pub fn object_mut<'a>(
         interners: &mut Jinterners<H>,
         o: impl Iterator<Item = (&'a str, Self)>,
     ) -> Self {
-        let mut io: Box<[_]> = o
-            .map(|(k, v)| (InternedStrKey(interners.string.intern_mut(k)), v))
-            .collect();
-        io.sort_unstable_by_key(|(k, _)| *k);
-        Self(IValueImpl::Object(interners.iobject.intern_copy_mut(&io)))
+        let mut o = o
+            .map(|(k, v)| (InternedStrKey::new_mut(interners, k), v))
+            .collect::<Box<[_]>>();
+        Self(IValueImpl::object_mut(interners, &mut o))
+    }
+
+    /// Interns a JSON object, whose values are already interned.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_object()`](Self::try_object), no locks are held
+    /// internally because this function already takes an exclusive mutable
+    /// reference to the [`Jinterners`] arena.
+    pub fn try_object_mut<'a>(
+        interners: &mut Jinterners<H>,
+        o: impl Iterator<Item = (&'a str, Self)>,
+    ) -> Option<Self> {
+        let mut o = o
+            .map(|(k, v)| Some((InternedStrKey::try_new_mut(interners, k)?, v)))
+            .collect::<Option<Box<[_]>>>()?;
+        IValueImpl::try_object_mut(interners, &mut o).map(Self)
     }
 
     /// Interns a JSON object, whose keys and values are already interned.
@@ -575,14 +811,33 @@ where
     /// See also [`object_from_keys_mut()`](Self::object_from_keys_mut), which
     /// is more efficient if you hold a mutable reference to the [`Jinterners`]
     /// arena as it avoids acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_object_from_keys()`](Self::try_object_from_keys) for a fallible
+    /// API.
     #[cfg(feature = "sync")]
     pub fn object_from_keys(
         interners: &Jinterners<H>,
         o: impl Iterator<Item = (InternedStrKey<H>, Self)>,
     ) -> Self {
-        let mut io: Box<[_]> = o.collect();
-        io.sort_unstable_by_key(|(k, _)| *k);
-        Self(IValueImpl::Object(interners.iobject.intern_copy(&io)))
+        Self(IValueImpl::object(interners, &mut o.collect::<Box<[_]>>()))
+    }
+
+    /// Interns a JSON object, whose keys and values are already interned.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`try_object_from_keys_mut()`](Self::try_object_from_keys_mut),
+    /// which is more efficient if you hold a mutable reference to the
+    /// [`Jinterners`] arena as it avoids acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_object_from_keys(
+        interners: &Jinterners<H>,
+        o: impl Iterator<Item = (InternedStrKey<H>, Self)>,
+    ) -> Option<Self> {
+        IValueImpl::try_object(interners, &mut o.collect::<Box<[_]>>()).map(Self)
     }
 
     /// Interns a JSON object, whose keys and values are already interned.
@@ -590,51 +845,89 @@ where
     /// Contrary to [`object_from_keys()`](Self::object_from_keys), no locks are
     /// held internally because this function already takes an exclusive mutable
     /// reference to the [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_object_from_keys_mut()`](Self::try_object_from_keys_mut) for a
+    /// fallible API.
     pub fn object_from_keys_mut(
         interners: &mut Jinterners<H>,
         o: impl Iterator<Item = (InternedStrKey<H>, Self)>,
     ) -> Self {
-        let mut io: Box<[_]> = o.collect();
-        io.sort_unstable_by_key(|(k, _)| *k);
-        Self(IValueImpl::Object(interners.iobject.intern_copy_mut(&io)))
+        Self(IValueImpl::object_mut(
+            interners,
+            &mut o.collect::<Box<[_]>>(),
+        ))
     }
 
-    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
-    /// arena.
+    /// Interns a JSON object, whose keys and values are already interned.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_object_from_keys()`](Self::try_object_from_keys), no
+    /// locks are held internally because this function already takes an
+    /// exclusive mutable reference to the [`Jinterners`] arena.
+    pub fn try_object_from_keys_mut(
+        interners: &mut Jinterners<H>,
+        o: impl Iterator<Item = (InternedStrKey<H>, Self)>,
+    ) -> Option<Self> {
+        IValueImpl::try_object_mut(interners, &mut o.collect::<Box<[_]>>()).map(Self)
+    }
+
     #[cfg(feature = "sync")]
     pub(crate) fn from(interners: &Jinterners<H>, source: Value) -> Self {
         Self(IValueImpl::from(interners, source))
     }
 
-    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
-    /// arena.
+    #[cfg(feature = "sync")]
+    pub(crate) fn try_from(interners: &Jinterners<H>, source: Value) -> Option<Self> {
+        IValueImpl::try_from(interners, source).map(Self)
+    }
+
     #[cfg(feature = "sync")]
     pub(crate) fn from_ref(interners: &Jinterners<H>, source: &Value) -> Self {
         Self(IValueImpl::from_ref(interners, source))
     }
 
-    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
-    /// arena.
+    #[cfg(feature = "sync")]
+    pub(crate) fn try_from_ref(interners: &Jinterners<H>, source: &Value) -> Option<Self> {
+        IValueImpl::try_from_ref(interners, source).map(Self)
+    }
+
     pub(crate) fn from_mut(interners: &mut Jinterners<H>, source: Value) -> Self {
         Self(IValueImpl::from_mut(interners, source))
     }
 
-    /// Interns the given [`serde_json::Value`] into the given [`Jinterners`]
-    /// arena.
+    pub(crate) fn try_from_mut(interners: &mut Jinterners<H>, source: Value) -> Option<Self> {
+        IValueImpl::try_from_mut(interners, source).map(Self)
+    }
+
     pub(crate) fn from_ref_mut(interners: &mut Jinterners<H>, source: &Value) -> Self {
         Self(IValueImpl::from_ref_mut(interners, source))
     }
 
-    /// Retrieves the corresponding [`serde_json::Value`] inside the given
-    /// [`Jinterners`] arena.
+    pub(crate) fn try_from_ref_mut(interners: &mut Jinterners<H>, source: &Value) -> Option<Self> {
+        IValueImpl::try_from_ref_mut(interners, source).map(Self)
+    }
+
     pub(crate) fn lookup(&self, interners: &Jinterners<H>) -> Value {
         self.0.lookup(interners)
     }
 
-    /// Performs a shallow lookup of this value inside the given [`Jinterners`]
-    /// arena.
+    pub(crate) fn try_lookup(&self, interners: &Jinterners<H>) -> Option<Value> {
+        self.0.try_lookup(interners)
+    }
+
     pub(crate) fn lookup_ref<'a>(&self, interners: &'a Jinterners<H>) -> ValueRef<'a, H> {
         self.0.lookup_ref(interners)
+    }
+
+    pub(crate) fn try_lookup_ref<'a>(
+        &self,
+        interners: &'a Jinterners<H>,
+    ) -> Option<ValueRef<'a, H>> {
+        self.0.try_lookup_ref(interners)
     }
 
     /// Convert an arbitrary type into an [`IValue`] using that type's
@@ -818,7 +1111,7 @@ where
     }
 
     /// Convenience function to call [`serde_json::to_vec()`] on a
-    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    /// [`BoundValue`] that combines this value with the given [`Jinterners`].
     #[cfg(feature = "serde")]
     pub fn to_json_bytes(
         &self,
@@ -828,7 +1121,7 @@ where
     }
 
     /// Convenience function to call [`serde_json::to_vec_pretty()`] on a
-    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    /// [`BoundValue`] that combines this value with the given [`Jinterners`].
     #[cfg(feature = "serde")]
     pub fn to_json_bytes_pretty(
         &self,
@@ -838,7 +1131,7 @@ where
     }
 
     /// Convenience function to call [`serde_json::to_string()`] on a
-    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    /// [`BoundValue`] that combines this value with the given [`Jinterners`].
     #[cfg(feature = "serde")]
     pub fn to_json_string(
         &self,
@@ -848,7 +1141,7 @@ where
     }
 
     /// Convenience function to call [`serde_json::to_string_pretty()`] on a
-    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    /// [`BoundValue`] that combines this value with the given [`Jinterners`].
     #[cfg(feature = "serde")]
     pub fn to_json_string_pretty(
         &self,
@@ -858,7 +1151,7 @@ where
     }
 
     /// Convenience function to call [`serde_json::to_writer()`] on a
-    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    /// [`BoundValue`] that combines this value with the given [`Jinterners`].
     #[cfg(all(feature = "serde", feature = "std"))]
     pub fn to_json_writer<W: Write>(
         &self,
@@ -869,7 +1162,7 @@ where
     }
 
     /// Convenience function to call [`serde_json::to_writer_pretty()`] on a
-    /// [`BoundValue`] combining this value with the given [`Jinterners`].
+    /// [`BoundValue`] that combines this value with the given [`Jinterners`].
     #[cfg(all(feature = "serde", feature = "std"))]
     pub fn to_json_writer_pretty<W: Write>(
         &self,
@@ -1246,12 +1539,29 @@ where
         }
     }
 
+    #[cfg(feature = "sync")]
+    fn try_u64(interners: &Jinterners<H>, x: u64) -> Option<Self> {
+        Some(if let Ok(x32) = u32::try_from(x) {
+            IValueImpl::U32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::U64(interners.uint64.try_intern(x)?)
+        })
+    }
+
     fn u64_mut(interners: &mut Jinterners<H>, x: u64) -> Self {
         if let Ok(x32) = u32::try_from(x) {
             IValueImpl::U32(x32.to_ne_bytes())
         } else {
             IValueImpl::U64(interners.uint64.intern_mut(x))
         }
+    }
+
+    fn try_u64_mut(interners: &mut Jinterners<H>, x: u64) -> Option<Self> {
+        Some(if let Ok(x32) = u32::try_from(x) {
+            IValueImpl::U32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::U64(interners.uint64.try_intern_mut(x)?)
+        })
     }
 
     #[cfg(feature = "sync")]
@@ -1263,6 +1573,15 @@ where
         }
     }
 
+    #[cfg(feature = "sync")]
+    fn try_i64(interners: &Jinterners<H>, x: i64) -> Option<Self> {
+        Some(if let Ok(x32) = i32::try_from(x) {
+            IValueImpl::I32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::I64(interners.int64.try_intern(x)?)
+        })
+    }
+
     fn i64_mut(interners: &mut Jinterners<H>, x: i64) -> Self {
         if let Ok(x32) = i32::try_from(x) {
             IValueImpl::I32(x32.to_ne_bytes())
@@ -1271,13 +1590,131 @@ where
         }
     }
 
+    fn try_i64_mut(interners: &mut Jinterners<H>, x: i64) -> Option<Self> {
+        Some(if let Ok(x32) = i32::try_from(x) {
+            IValueImpl::I32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::I64(interners.int64.try_intern_mut(x)?)
+        })
+    }
+
     #[cfg(feature = "sync")]
     fn f64(interners: &Jinterners<H>, x: f64) -> Self {
         IValueImpl::F64(interners.float64.intern(Float64(OrderedFloat(x))))
     }
 
+    #[cfg(feature = "sync")]
+    fn try_f64(interners: &Jinterners<H>, x: f64) -> Option<Self> {
+        interners
+            .float64
+            .try_intern(Float64(OrderedFloat(x)))
+            .map(IValueImpl::F64)
+    }
+
     fn f64_mut(interners: &mut Jinterners<H>, x: f64) -> Self {
         IValueImpl::F64(interners.float64.intern_mut(Float64(OrderedFloat(x))))
+    }
+
+    fn try_f64_mut(interners: &mut Jinterners<H>, x: f64) -> Option<Self> {
+        interners
+            .float64
+            .try_intern_mut(Float64(OrderedFloat(x)))
+            .map(IValueImpl::F64)
+    }
+
+    #[cfg(feature = "sync")]
+    fn string(interners: &Jinterners<H>, s: &str) -> Self {
+        IValueImpl::String(interners.string.intern(s))
+    }
+
+    #[cfg(feature = "sync")]
+    fn try_string(interners: &Jinterners<H>, s: &str) -> Option<Self> {
+        interners.string.try_intern(s).map(IValueImpl::String)
+    }
+
+    fn string_mut(interners: &mut Jinterners<H>, s: &str) -> Self {
+        IValueImpl::String(interners.string.intern_mut(s))
+    }
+
+    fn try_string_mut(interners: &mut Jinterners<H>, s: &str) -> Option<Self> {
+        interners.string.try_intern_mut(s).map(IValueImpl::String)
+    }
+
+    #[cfg(feature = "sync")]
+    fn array(interners: &Jinterners<H>, a: &[IValue<H>]) -> Self {
+        IValueImpl::Array(interners.iarray.intern_copy(a))
+    }
+
+    #[cfg(feature = "sync")]
+    fn try_array(interners: &Jinterners<H>, a: &[IValue<H>]) -> Option<Self> {
+        interners.iarray.try_intern_copy(a).map(IValueImpl::Array)
+    }
+
+    fn array_mut(interners: &mut Jinterners<H>, a: &[IValue<H>]) -> Self {
+        IValueImpl::Array(interners.iarray.intern_copy_mut(a))
+    }
+
+    fn try_array_mut(interners: &mut Jinterners<H>, a: &[IValue<H>]) -> Option<Self> {
+        interners
+            .iarray
+            .try_intern_copy_mut(a)
+            .map(IValueImpl::Array)
+    }
+
+    #[cfg(feature = "sync")]
+    fn object(interners: &Jinterners<H>, o: &mut [(InternedStrKey<H>, IValue<H>)]) -> Self {
+        o.sort_unstable_by_key(|(k, _)| *k);
+        IValueImpl::Object(interners.iobject.intern_copy(o))
+    }
+
+    #[cfg(feature = "sync")]
+    fn try_object(
+        interners: &Jinterners<H>,
+        o: &mut [(InternedStrKey<H>, IValue<H>)],
+    ) -> Option<Self> {
+        o.sort_unstable_by_key(|(k, _)| *k);
+        interners.iobject.try_intern_copy(o).map(IValueImpl::Object)
+    }
+
+    fn object_mut(interners: &mut Jinterners<H>, o: &mut [(InternedStrKey<H>, IValue<H>)]) -> Self {
+        o.sort_unstable_by_key(|(k, _)| *k);
+        IValueImpl::Object(interners.iobject.intern_copy_mut(o))
+    }
+
+    fn try_object_mut(
+        interners: &mut Jinterners<H>,
+        o: &mut [(InternedStrKey<H>, IValue<H>)],
+    ) -> Option<Self> {
+        o.sort_unstable_by_key(|(k, _)| *k);
+        interners
+            .iobject
+            .try_intern_copy_mut(o)
+            .map(IValueImpl::Object)
+    }
+
+    /// Interns an object containing a single key-value pair.
+    #[cfg(all(feature = "serde", feature = "sync"))]
+    fn try_singleton(
+        interners: &Jinterners<H>,
+        key: InternedStrKey<H>,
+        value: IValue<H>,
+    ) -> Option<Self> {
+        interners
+            .iobject
+            .try_intern_copy(&[(key, value)])
+            .map(IValueImpl::Object)
+    }
+
+    #[cfg(feature = "serde")]
+    fn try_singleton_mut(
+        interners: &mut Jinterners<H>,
+        key: InternedStrKey<H>,
+        value: IValue<H>,
+    ) -> Option<Self> {
+        interners
+            .iobject
+            .try_intern_copy_mut(&[(key, value)])
+            .map(IValueImpl::Object)
     }
 
     #[cfg(feature = "sync")]
@@ -1294,27 +1731,56 @@ where
                     IValueImpl::f64(interners, x.as_f64().unwrap())
                 }
             }
-            Value::String(s) => IValueImpl::String(interners.string.intern(&s)),
-            Value::Array(a) => IValueImpl::Array(
-                interners.iarray.intern_copy(
-                    &a.into_iter()
-                        .map(|v| interners.intern(v))
-                        .collect::<Box<[_]>>(),
-                ),
+            Value::String(s) => IValueImpl::string(interners, &s),
+            Value::Array(a) => IValueImpl::array(
+                interners,
+                &a.into_iter()
+                    .map(|v| interners.intern(v))
+                    .collect::<Box<[_]>>(),
             ),
-            Value::Object(o) => {
-                let mut io: Box<[_]> = o
+            Value::Object(o) => IValueImpl::object(
+                interners,
+                &mut o
+                    .into_iter()
+                    .map(|(k, v)| (InternedStrKey::new(interners, &k), interners.intern(v)))
+                    .collect::<Box<[_]>>(),
+            ),
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    fn try_from(interners: &Jinterners<H>, source: Value) -> Option<Self> {
+        match source {
+            Value::Null => Some(IValueImpl::Null),
+            Value::Bool(x) => Some(IValueImpl::Bool(x)),
+            Value::Number(x) => {
+                if x.is_u64() {
+                    IValueImpl::try_u64(interners, x.as_u64().unwrap())
+                } else if x.is_i64() {
+                    IValueImpl::try_i64(interners, x.as_i64().unwrap())
+                } else {
+                    IValueImpl::try_f64(interners, x.as_f64().unwrap())
+                }
+            }
+            Value::String(s) => IValueImpl::try_string(interners, &s),
+            Value::Array(a) => IValueImpl::try_array(
+                interners,
+                &a.into_iter()
+                    .map(|v| interners.try_intern(v))
+                    .collect::<Option<Box<[_]>>>()?,
+            ),
+            Value::Object(o) => IValueImpl::try_object(
+                interners,
+                &mut o
                     .into_iter()
                     .map(|(k, v)| {
-                        (
-                            InternedStrKey(interners.string.intern(&k)),
-                            interners.intern(v),
-                        )
+                        Some((
+                            InternedStrKey::try_new(interners, &k)?,
+                            interners.try_intern(v)?,
+                        ))
                     })
-                    .collect();
-                io.sort_unstable_by_key(|(k, _)| *k);
-                IValueImpl::Object(interners.iobject.intern_copy(&io))
-            }
+                    .collect::<Option<Box<[_]>>>()?,
+            ),
         }
     }
 
@@ -1332,27 +1798,61 @@ where
                     IValueImpl::f64(interners, x.as_f64().unwrap())
                 }
             }
-            Value::String(s) => IValueImpl::String(interners.string.intern(s.as_str())),
-            Value::Array(a) => IValueImpl::Array(
-                interners.iarray.intern_copy(
-                    &a.iter()
-                        .map(|v| interners.intern_ref(v))
-                        .collect::<Box<[_]>>(),
-                ),
+            Value::String(s) => IValueImpl::string(interners, s.as_str()),
+            Value::Array(a) => IValueImpl::array(
+                interners,
+                &a.iter()
+                    .map(|v| interners.intern_ref(v))
+                    .collect::<Box<[_]>>(),
             ),
-            Value::Object(o) => {
-                let mut io: Box<[_]> = o
+            Value::Object(o) => IValueImpl::object(
+                interners,
+                &mut o
                     .iter()
                     .map(|(k, v)| {
                         (
-                            InternedStrKey(interners.string.intern(k.as_str())),
+                            InternedStrKey::new(interners, k.as_str()),
                             interners.intern_ref(v),
                         )
                     })
-                    .collect();
-                io.sort_unstable_by_key(|(k, _)| *k);
-                IValueImpl::Object(interners.iobject.intern_copy(&io))
+                    .collect::<Box<[_]>>(),
+            ),
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    fn try_from_ref(interners: &Jinterners<H>, source: &Value) -> Option<Self> {
+        match source {
+            Value::Null => Some(IValueImpl::Null),
+            Value::Bool(x) => Some(IValueImpl::Bool(*x)),
+            Value::Number(x) => {
+                if x.is_u64() {
+                    IValueImpl::try_u64(interners, x.as_u64().unwrap())
+                } else if x.is_i64() {
+                    IValueImpl::try_i64(interners, x.as_i64().unwrap())
+                } else {
+                    IValueImpl::try_f64(interners, x.as_f64().unwrap())
+                }
             }
+            Value::String(s) => IValueImpl::try_string(interners, s.as_str()),
+            Value::Array(a) => IValueImpl::try_array(
+                interners,
+                &a.iter()
+                    .map(|v| interners.try_intern_ref(v))
+                    .collect::<Option<Box<[_]>>>()?,
+            ),
+            Value::Object(o) => IValueImpl::try_object(
+                interners,
+                &mut o
+                    .iter()
+                    .map(|(k, v)| {
+                        Some((
+                            InternedStrKey::try_new(interners, k.as_str())?,
+                            interners.try_intern_ref(v)?,
+                        ))
+                    })
+                    .collect::<Option<Box<[_]>>>()?,
+            ),
         }
     }
 
@@ -1369,26 +1869,61 @@ where
                     IValueImpl::f64_mut(interners, x.as_f64().unwrap())
                 }
             }
-            Value::String(s) => IValueImpl::String(interners.string.intern_mut(&s)),
+            Value::String(s) => IValueImpl::string_mut(interners, &s),
             Value::Array(a) => {
                 let a = a
                     .into_iter()
                     .map(|v| interners.intern_mut(v))
                     .collect::<Box<[_]>>();
-                IValueImpl::Array(interners.iarray.intern_copy_mut(&a))
+                IValueImpl::array_mut(interners, &a)
             }
             Value::Object(o) => {
-                let mut io: Box<[_]> = o
+                let mut o = o
                     .into_iter()
                     .map(|(k, v)| {
                         (
-                            InternedStrKey(interners.string.intern_mut(&k)),
+                            InternedStrKey::new_mut(interners, &k),
                             interners.intern_mut(v),
                         )
                     })
-                    .collect();
-                io.sort_unstable_by_key(|(k, _)| *k);
-                IValueImpl::Object(interners.iobject.intern_copy_mut(&io))
+                    .collect::<Box<[_]>>();
+                IValueImpl::object_mut(interners, &mut o)
+            }
+        }
+    }
+
+    fn try_from_mut(interners: &mut Jinterners<H>, source: Value) -> Option<Self> {
+        match source {
+            Value::Null => Some(IValueImpl::Null),
+            Value::Bool(x) => Some(IValueImpl::Bool(x)),
+            Value::Number(x) => {
+                if x.is_u64() {
+                    IValueImpl::try_u64_mut(interners, x.as_u64().unwrap())
+                } else if x.is_i64() {
+                    IValueImpl::try_i64_mut(interners, x.as_i64().unwrap())
+                } else {
+                    IValueImpl::try_f64_mut(interners, x.as_f64().unwrap())
+                }
+            }
+            Value::String(s) => IValueImpl::try_string_mut(interners, &s),
+            Value::Array(a) => {
+                let a: Box<[_]> = a
+                    .into_iter()
+                    .map(|v| interners.try_intern_mut(v))
+                    .collect::<Option<_>>()?;
+                IValueImpl::try_array_mut(interners, &a)
+            }
+            Value::Object(o) => {
+                let mut o = o
+                    .into_iter()
+                    .map(|(k, v)| {
+                        Some((
+                            InternedStrKey::try_new_mut(interners, &k)?,
+                            interners.try_intern_mut(v)?,
+                        ))
+                    })
+                    .collect::<Option<Box<[_]>>>()?;
+                IValueImpl::try_object_mut(interners, &mut o)
             }
         }
     }
@@ -1406,32 +1941,74 @@ where
                     IValueImpl::f64_mut(interners, x.as_f64().unwrap())
                 }
             }
-            Value::String(s) => IValueImpl::String(interners.string.intern_mut(s.as_str())),
+            Value::String(s) => IValueImpl::string_mut(interners, s.as_str()),
             Value::Array(a) => {
                 let a = a
                     .iter()
                     .map(|v| interners.intern_ref_mut(v))
                     .collect::<Box<[_]>>();
-                IValueImpl::Array(interners.iarray.intern_copy_mut(&a))
+                IValueImpl::array_mut(interners, &a)
             }
             Value::Object(o) => {
-                let mut io: Box<[_]> = o
+                let mut o = o
                     .iter()
                     .map(|(k, v)| {
                         (
-                            InternedStrKey(interners.string.intern_mut(k.as_str())),
+                            InternedStrKey::new_mut(interners, k.as_str()),
                             interners.intern_ref_mut(v),
                         )
                     })
-                    .collect();
-                io.sort_unstable_by_key(|(k, _)| *k);
-                IValueImpl::Object(interners.iobject.intern_copy_mut(&io))
+                    .collect::<Box<[_]>>();
+                IValueImpl::object_mut(interners, &mut o)
+            }
+        }
+    }
+
+    fn try_from_ref_mut(interners: &mut Jinterners<H>, source: &Value) -> Option<Self> {
+        match source {
+            Value::Null => Some(IValueImpl::Null),
+            Value::Bool(x) => Some(IValueImpl::Bool(*x)),
+            Value::Number(x) => {
+                if x.is_u64() {
+                    IValueImpl::try_u64_mut(interners, x.as_u64().unwrap())
+                } else if x.is_i64() {
+                    IValueImpl::try_i64_mut(interners, x.as_i64().unwrap())
+                } else {
+                    IValueImpl::try_f64_mut(interners, x.as_f64().unwrap())
+                }
+            }
+            Value::String(s) => IValueImpl::try_string_mut(interners, s.as_str()),
+            Value::Array(a) => {
+                let a: Box<[_]> = a
+                    .iter()
+                    .map(|v| interners.try_intern_ref_mut(v))
+                    .collect::<Option<_>>()?;
+                IValueImpl::try_array_mut(interners, &a)
+            }
+            Value::Object(o) => {
+                let mut o = o
+                    .iter()
+                    .map(|(k, v)| {
+                        Some((
+                            InternedStrKey::try_new_mut(interners, k.as_str())?,
+                            interners.try_intern_ref_mut(v)?,
+                        ))
+                    })
+                    .collect::<Option<Box<[_]>>>()?;
+                IValueImpl::try_object_mut(interners, &mut o)
             }
         }
     }
 
     fn lookup(&self, interners: &Jinterners<H>) -> Value {
-        match self {
+        match self.try_lookup(interners) {
+            Some(x) => x,
+            None => panic!("Interned index is out of bounds for this arena"),
+        }
+    }
+
+    fn try_lookup(&self, interners: &Jinterners<H>) -> Option<Value> {
+        Some(match self {
             IValueImpl::Null => Value::Null,
             IValueImpl::Bool(x) => Value::Bool(*x),
             IValueImpl::U32(x) => {
@@ -1441,53 +2018,65 @@ where
                 Value::Number(Number::from_i128(i32::from_ne_bytes(*x) as i128).unwrap())
             }
             IValueImpl::U64(x) => {
-                let x = interners.uint64.lookup(*x);
+                let x = interners.uint64.try_lookup(*x)?;
                 Value::Number(Number::from_u128(x as u128).unwrap())
             }
             IValueImpl::I64(x) => {
-                let x = interners.int64.lookup(*x);
+                let x = interners.int64.try_lookup(*x)?;
                 Value::Number(Number::from_i128(x as i128).unwrap())
             }
             IValueImpl::F64(x) => {
-                let Float64(OrderedFloat(x)) = interners.float64.lookup(*x);
+                let Float64(OrderedFloat(x)) = interners.float64.try_lookup(*x)?;
                 Value::Number(Number::from_f64(x).unwrap())
             }
-            IValueImpl::String(s) => Value::String(interners.string.lookup(*s).into()),
+            IValueImpl::String(s) => Value::String(interners.string.try_lookup(*s)?.into()),
             IValueImpl::Array(a) => Value::Array(
                 interners
                     .iarray
-                    .lookup(*a)
+                    .try_lookup(*a)?
                     .iter()
-                    .map(|v| interners.lookup(v))
-                    .collect(),
+                    .map(|v| interners.try_lookup(v))
+                    .collect::<Option<_>>()?,
             ),
             IValueImpl::Object(o) => Value::Object(
                 interners
                     .iobject
-                    .lookup(*o)
+                    .try_lookup(*o)?
                     .iter()
-                    .map(|(k, v)| (interners.string.lookup(k.0).into(), interners.lookup(v)))
-                    .collect(),
+                    .map(|(k, v)| {
+                        Some((
+                            interners.string.try_lookup(k.0)?.into(),
+                            interners.try_lookup(v)?,
+                        ))
+                    })
+                    .collect::<Option<_>>()?,
             ),
-        }
+        })
     }
 
     fn lookup_ref<'a>(&self, interners: &'a Jinterners<H>) -> ValueRef<'a, H> {
-        match self {
+        match self.try_lookup_ref(interners) {
+            Some(x) => x,
+            None => panic!("Interned index is out of bounds for this arena"),
+        }
+    }
+
+    fn try_lookup_ref<'a>(&self, interners: &'a Jinterners<H>) -> Option<ValueRef<'a, H>> {
+        Some(match self {
             IValueImpl::Null => ValueRef::Null,
             IValueImpl::Bool(x) => ValueRef::Bool(*x),
             IValueImpl::U32(x) => ValueRef::U64(u32::from_ne_bytes(*x) as u64),
             IValueImpl::I32(x) => ValueRef::I64(i32::from_ne_bytes(*x) as i64),
-            IValueImpl::U64(x) => ValueRef::U64(interners.uint64.lookup(*x)),
-            IValueImpl::I64(x) => ValueRef::I64(interners.int64.lookup(*x)),
-            IValueImpl::F64(x) => ValueRef::F64(interners.float64.lookup(*x).0.0),
-            IValueImpl::String(s) => ValueRef::String(interners.string.lookup(*s)),
-            IValueImpl::Array(a) => ValueRef::Array(interners.iarray.lookup(*a)),
+            IValueImpl::U64(x) => ValueRef::U64(interners.uint64.try_lookup(*x)?),
+            IValueImpl::I64(x) => ValueRef::I64(interners.int64.try_lookup(*x)?),
+            IValueImpl::F64(x) => ValueRef::F64(interners.float64.try_lookup(*x)?.0.0),
+            IValueImpl::String(s) => ValueRef::String(interners.string.try_lookup(*s)?),
+            IValueImpl::Array(a) => ValueRef::Array(interners.iarray.try_lookup(*a)?),
             IValueImpl::Object(o) => ValueRef::Object(MapRef {
                 arena_str: &interners.string,
-                map: interners.iobject.lookup(*o),
+                map: interners.iobject.try_lookup(*o)?,
             }),
-        }
+        })
     }
 }
 
@@ -1546,10 +2135,32 @@ impl<'a, H> MapRef<'a, H> {
     /// See also [`iter_keys()`](Self::iter_keys) which is more efficient if you
     /// only need to manipulate [`InternedStrKey`]s as it doesn't resolve them
     /// to strings.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the map references keys that are out of bounds
+    /// for this arena, for example because the arena was truncated, or because
+    /// of deserializing untrusted data. Use [`try_iter()`](Self::try_iter) for
+    /// a fallible API.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&'a str, &'a IValue<H>)> {
         self.map
             .iter()
             .map(|(k, v)| (self.arena_str.lookup(k.0), v))
+    }
+
+    /// Iterates over the key-value pairs in this JSON map, in arbitrary order.
+    ///
+    /// See also [`iter_keys()`](Self::iter_keys) which is more efficient if you
+    /// only need to manipulate [`InternedStrKey`]s as it doesn't resolve them
+    /// to strings.
+    ///
+    /// This returns [`None`] for entries that reference a key that is out of
+    /// bounds for this arena, for example because the arena was truncated, or
+    /// because of deserializing untrusted data.
+    pub fn try_iter(&self) -> impl ExactSizeIterator<Item = Option<(&'a str, &'a IValue<H>)>> {
+        self.map
+            .iter()
+            .map(|(k, v)| Some((self.arena_str.try_lookup(k.0)?, v)))
     }
 
     /// Iterates over the key-value pairs in this JSON map, in sorted order of

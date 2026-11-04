@@ -346,6 +346,11 @@ where
     /// See also [`intern_mut()`](Self::intern_mut), which is more efficient if
     /// you hold a mutable reference to this [`Jinterners`] arena as it avoids
     /// acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_intern()`](Self::try_intern) for a fallible API.
     #[cfg(feature = "sync")]
     pub fn intern(&self, source: Value) -> IValue<H> {
         IValue::from(self, source)
@@ -353,9 +358,26 @@ where
 
     /// Interns the given [`serde_json::Value`] into this arena.
     ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`try_intern_mut()`](Self::try_intern_mut), which is more
+    /// efficient if you hold a mutable reference to this [`Jinterners`] arena
+    /// as it avoids acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_intern(&self, source: Value) -> Option<IValue<H>> {
+        IValue::try_from(self, source)
+    }
+
+    /// Interns the given [`serde_json::Value`] into this arena.
+    ///
     /// See also [`intern_ref_mut()`](Self::intern_ref_mut), which is more
     /// efficient if you hold a mutable reference to this [`Jinterners`] arena
     /// as it avoids acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_intern_ref()`](Self::try_intern_ref) for a fallible API.
     #[cfg(feature = "sync")]
     pub fn intern_ref(&self, source: &Value) -> IValue<H> {
         IValue::from_ref(self, source)
@@ -363,11 +385,39 @@ where
 
     /// Interns the given [`serde_json::Value`] into this arena.
     ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`try_intern_ref_mut()`](Self::try_intern_ref_mut), which is
+    /// more efficient if you hold a mutable reference to this [`Jinterners`]
+    /// arena as it avoids acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_intern_ref(&self, source: &Value) -> Option<IValue<H>> {
+        IValue::try_from_ref(self, source)
+    }
+
+    /// Interns the given [`serde_json::Value`] into this arena.
+    ///
     /// Contrary to [`intern()`](Self::intern), no locks are held internally
     /// because this function already takes an exclusive mutable reference to
     /// this [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_intern_mut()`](Self::try_intern_mut) for a fallible API.
     pub fn intern_mut(&mut self, source: Value) -> IValue<H> {
         IValue::from_mut(self, source)
+    }
+
+    /// Interns the given [`serde_json::Value`] into this arena.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_intern()`](Self::try_intern), no locks are held
+    /// internally because this function already takes an exclusive mutable
+    /// reference to this [`Jinterners`] arena.
+    pub fn try_intern_mut(&mut self, source: Value) -> Option<IValue<H>> {
+        IValue::try_from_mut(self, source)
     }
 
     /// Interns the given [`serde_json::Value`] into this arena.
@@ -375,8 +425,24 @@ where
     /// Contrary to [`intern_ref()`](Self::intern_ref), no locks are held
     /// internally because this function already takes an exclusive mutable
     /// reference to this [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_intern_ref_mut()`](Self::try_intern_ref_mut) for a fallible API.
     pub fn intern_ref_mut(&mut self, source: &Value) -> IValue<H> {
         IValue::from_ref_mut(self, source)
+    }
+
+    /// Interns the given [`serde_json::Value`] into this arena.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_intern_ref()`](Self::try_intern_ref), no locks are
+    /// held internally because this function already takes an exclusive mutable
+    /// reference to this [`Jinterners`] arena.
+    pub fn try_intern_ref_mut(&mut self, source: &Value) -> Option<IValue<H>> {
+        IValue::try_from_ref_mut(self, source)
     }
 
     /// Retrieves the given interned value from this arena.
@@ -387,8 +453,30 @@ where
     ///
     /// See also [`lookup_ref()`](Self::lookup_ref) if you only need a shallow
     /// view.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the interned value is out of bounds for this
+    /// arena, for example because the arena was truncated, or because the
+    /// interned value was deserialized from untrusted data. Use
+    /// [`try_lookup()`](Self::try_lookup) for a fallible API.
     pub fn lookup(&self, value: &IValue<H>) -> Value {
         value.lookup(self)
+    }
+
+    /// Retrieves the given interned value from this arena.
+    ///
+    /// The caller is responsible for ensuring that the same arena was used to
+    /// intern this value, otherwise an arbitrary value will be returned.
+    ///
+    /// This returns [`None`] if the interned value is out of bounds for this
+    /// arena, for example because the arena was truncated, or because the
+    /// interned value was deserialized from untrusted data.
+    ///
+    /// See also [`try_lookup_ref()`](Self::try_lookup_ref) if you only need a
+    /// shallow view.
+    pub fn try_lookup(&self, value: &IValue<H>) -> Option<Value> {
+        value.try_lookup(self)
     }
 
     /// Retrieves the given interned value from this arena.
@@ -400,8 +488,31 @@ where
     /// Contrary to [`lookup()`](Self::lookup), this function doesn't create a
     /// deep copy of the value, and is therefore likely more efficient if you
     /// only need to query specific object field(s) or array element(s).
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the interned value is out of bounds for this
+    /// arena, for example because the arena was truncated, or because the
+    /// interned value was deserialized from untrusted data. Use
+    /// [`try_lookup_ref()`](Self::try_lookup_ref) for a fallible API.
     pub fn lookup_ref(&self, value: &IValue<H>) -> ValueRef<'_, H> {
         value.lookup_ref(self)
+    }
+
+    /// Retrieves the given interned value from this arena.
+    ///
+    /// The caller is responsible for ensuring that the same arena was used to
+    /// intern this value, otherwise an arbitrary value will be returned.
+    ///
+    /// Contrary to [`try_lookup()`](Self::try_lookup), this function doesn't
+    /// create a deep copy of the value, and is therefore likely more efficient
+    /// if you only need to query specific object field(s) or array element(s).
+    ///
+    /// This returns [`None`] if the interned value is out of bounds for this
+    /// arena, for example because the arena was truncated, or because the
+    /// interned value was deserialized from untrusted data.
+    pub fn try_lookup_ref(&self, value: &IValue<H>) -> Option<ValueRef<'_, H>> {
+        value.try_lookup_ref(self)
     }
 
     /// Interns the given string as a map key into this arena.
@@ -412,9 +523,29 @@ where
     /// See also [`intern_key_mut()`](Self::intern_key_mut), which is more
     /// efficient if you hold a mutable reference to this [`Jinterners`]
     /// arena as it avoids acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_intern_key()`](Self::try_intern_key) for a fallible API.
     #[cfg(feature = "sync")]
     pub fn intern_key(&self, key: &str) -> InternedStrKey<H> {
-        InternedStrKey(self.string.intern(key))
+        InternedStrKey::new(self, key)
+    }
+
+    /// Interns the given string as a map key into this arena.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`find_key`](Self::find_key) is you don't need to add the key
+    /// to the arena but just use it to lookup values in JSON maps.
+    ///
+    /// See also [`try_intern_key_mut()`](Self::try_intern_key_mut), which is
+    /// more efficient if you hold a mutable reference to this [`Jinterners`]
+    /// arena as it avoids acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_intern_key(&self, key: &str) -> Option<InternedStrKey<H>> {
+        InternedStrKey::try_new(self, key)
     }
 
     /// Interns the given string as a map key into this arena.
@@ -425,8 +556,27 @@ where
     /// Contrary to [`intern_key()`](Self::intern_key), no locks are held
     /// internally because this function already takes an exclusive mutable
     /// reference to this [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_intern_key_mut()`](Self::try_intern_key_mut) for a fallible API.
     pub fn intern_key_mut(&mut self, key: &str) -> InternedStrKey<H> {
-        InternedStrKey(self.string.intern_mut(key))
+        InternedStrKey::new_mut(self, key)
+    }
+
+    /// Interns the given string as a map key into this arena.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`find_key_mut`](Self::find_key_mut) is you don't need to add
+    /// the key to the arena but just use it to lookup values in JSON maps.
+    ///
+    /// Contrary to [`try_intern_key()`](Self::try_intern_key), no locks are
+    /// held internally because this function already takes an exclusive mutable
+    /// reference to this [`Jinterners`] arena.
+    pub fn try_intern_key_mut(&mut self, key: &str) -> Option<InternedStrKey<H>> {
+        InternedStrKey::try_new_mut(self, key)
     }
 
     /// Retrieves the given interned key from this arena.
@@ -434,8 +584,27 @@ where
     /// The caller is responsible for ensuring that the same arena was used to
     /// intern this key, otherwise an arbitrary string will be returned or a
     /// panic will happen.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the interned key is out of bounds for this
+    /// arena, for example because the arena was truncated, or because the
+    /// interned key was deserialized from untrusted data. Use
+    /// [`try_lookup_key()`](Self::try_lookup_key) for a fallible API.
     pub fn lookup_key(&self, key: InternedStrKey<H>) -> &str {
         self.string.lookup(key.0)
+    }
+
+    /// Retrieves the given interned key from this arena.
+    ///
+    /// The caller is responsible for ensuring that the same arena was used to
+    /// intern this key, otherwise an arbitrary string will be returned.
+    ///
+    /// This returns [`None`] if the interned key is out of bounds for this
+    /// arena, for example because the arena was truncated, or because the
+    /// interned key was deserialized from untrusted data.
+    pub fn try_lookup_key(&self, key: InternedStrKey<H>) -> Option<&str> {
+        self.string.try_lookup(key.0)
     }
 
     /// Retrieves the object key associated to the given string, or [`None`] if

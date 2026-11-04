@@ -19,7 +19,9 @@ fn deserialize_array<'de, V, H>(
 where
     V: Visitor<'de>,
 {
-    let array = interners.iarray.lookup(array);
+    let array = interners.iarray.try_lookup(array).ok_or(Error::custom(
+        "Interned<array> is out of bounds for this arena",
+    ))?;
     let len = array.len();
     let mut array_access = ArrayAccess {
         array,
@@ -44,7 +46,9 @@ fn deserialize_array_expected_len<'de, V, H>(
 where
     V: Visitor<'de>,
 {
-    let array = interners.iarray.lookup(array);
+    let array = interners.iarray.try_lookup(array).ok_or(Error::custom(
+        "Interned<array> is out of bounds for this arena",
+    ))?;
     let len = array.len();
     if len != expected_len {
         return Err(Error::invalid_length(len, &make_error_msg().as_str()));
@@ -71,7 +75,9 @@ fn deserialize_object<'de, V, H>(
 where
     V: Visitor<'de>,
 {
-    let object = interners.iobject.lookup(object);
+    let object = interners.iobject.try_lookup(object).ok_or(Error::custom(
+        "Interned<object> is out of bounds for this arena",
+    ))?;
     let len = object.len();
     let mut object_access = ObjectAccess {
         object,
@@ -105,10 +111,23 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
             IValueImpl::Bool(x) => Unexpected::Bool(*x),
             IValueImpl::U32(x) => Unexpected::Unsigned(u32::from_ne_bytes(*x) as u64),
             IValueImpl::I32(x) => Unexpected::Signed(i32::from_ne_bytes(*x) as i64),
-            IValueImpl::U64(x) => Unexpected::Unsigned(self.interners.uint64.lookup(*x)),
-            IValueImpl::I64(x) => Unexpected::Signed(self.interners.int64.lookup(*x)),
-            IValueImpl::F64(x) => Unexpected::Float(self.interners.float64.lookup(*x).0.0),
-            IValueImpl::String(s) => Unexpected::Str(self.interners.string.lookup(*s)),
+            IValueImpl::U64(x) => {
+                Unexpected::Unsigned(self.interners.uint64.try_lookup(*x).unwrap_or_default())
+            }
+            IValueImpl::I64(x) => {
+                Unexpected::Signed(self.interners.int64.try_lookup(*x).unwrap_or_default())
+            }
+            IValueImpl::F64(x) => Unexpected::Float(
+                self.interners
+                    .float64
+                    .try_lookup(*x)
+                    .unwrap_or_default()
+                    .0
+                    .0,
+            ),
+            IValueImpl::String(s) => {
+                Unexpected::Str(self.interners.string.try_lookup(*s).unwrap_or_default())
+            }
             IValueImpl::Array(_) => Unexpected::Seq,
             IValueImpl::Object(_) => Unexpected::Map,
         }
@@ -121,8 +140,12 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
         match self.value {
             IValueImpl::U32(x) => visitor.visit_u32(u32::from_ne_bytes(*x)),
             IValueImpl::I32(x) => visitor.visit_i32(i32::from_ne_bytes(*x)),
-            IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.lookup(*x)),
-            IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.lookup(*x)),
+            IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.try_lookup(*x).ok_or(
+                Error::custom("Interned<u64> is out of bounds for this arena"),
+            )?),
+            IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.try_lookup(*x).ok_or(
+                Error::custom("Interned<i64> is out of bounds for this arena"),
+            )?),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
@@ -134,9 +157,22 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
         match self.value {
             IValueImpl::U32(x) => visitor.visit_u32(u32::from_ne_bytes(*x)),
             IValueImpl::I32(x) => visitor.visit_i32(i32::from_ne_bytes(*x)),
-            IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.lookup(*x)),
-            IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.lookup(*x)),
-            IValueImpl::F64(x) => visitor.visit_f64(self.interners.float64.lookup(*x).0.0),
+            IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.try_lookup(*x).ok_or(
+                Error::custom("Interned<u64> is out of bounds for this arena"),
+            )?),
+            IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.try_lookup(*x).ok_or(
+                Error::custom("Interned<i64> is out of bounds for this arena"),
+            )?),
+            IValueImpl::F64(x) => visitor.visit_f64(
+                self.interners
+                    .float64
+                    .try_lookup(*x)
+                    .ok_or(Error::custom(
+                        "Interned<f64> is out of bounds for this arena",
+                    ))?
+                    .0
+                    .0,
+            ),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
@@ -154,10 +190,27 @@ impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
             IValueImpl::Bool(x) => visitor.visit_bool(*x),
             IValueImpl::U32(x) => visitor.visit_u32(u32::from_ne_bytes(*x)),
             IValueImpl::I32(x) => visitor.visit_i32(i32::from_ne_bytes(*x)),
-            IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.lookup(*x)),
-            IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.lookup(*x)),
-            IValueImpl::F64(x) => visitor.visit_f64(self.interners.float64.lookup(*x).0.0),
-            IValueImpl::String(s) => visitor.visit_borrowed_str(self.interners.string.lookup(*s)),
+            IValueImpl::U64(x) => visitor.visit_u64(self.interners.uint64.try_lookup(*x).ok_or(
+                Error::custom("Interned<u64> is out of bounds for this arena"),
+            )?),
+            IValueImpl::I64(x) => visitor.visit_i64(self.interners.int64.try_lookup(*x).ok_or(
+                Error::custom("Interned<i64> is out of bounds for this arena"),
+            )?),
+            IValueImpl::F64(x) => visitor.visit_f64(
+                self.interners
+                    .float64
+                    .try_lookup(*x)
+                    .ok_or(Error::custom(
+                        "Interned<f64> is out of bounds for this arena",
+                    ))?
+                    .0
+                    .0,
+            ),
+            IValueImpl::String(s) => {
+                visitor.visit_borrowed_str(self.interners.string.try_lookup(*s).ok_or(
+                    Error::custom("Interned<string> is out of bounds for this arena"),
+                )?)
+            }
             IValueImpl::Array(a) => deserialize_array(visitor, *a, self.interners),
             IValueImpl::Object(o) => deserialize_object(visitor, *o, self.interners),
         }
@@ -269,7 +322,11 @@ impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
         V: Visitor<'de>,
     {
         match self.value {
-            IValueImpl::String(s) => visitor.visit_borrowed_str(self.interners.string.lookup(*s)),
+            IValueImpl::String(s) => {
+                visitor.visit_borrowed_str(self.interners.string.try_lookup(*s).ok_or(
+                    Error::custom("Interned<string> is out of bounds for this arena"),
+                )?)
+            }
             _ => Err(self.invalid_type(&visitor)),
         }
     }
@@ -401,7 +458,9 @@ impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
                 interners: self.interners,
             }),
             IValueImpl::Object(o) => {
-                let object = self.interners.iobject.lookup(*o);
+                let object = self.interners.iobject.try_lookup(*o).ok_or(Error::custom(
+                    "Interned<object> is out of bounds for this arena",
+                ))?;
                 if object.len() != 1 {
                     Err(Error::invalid_length(
                         object.len(),
@@ -650,7 +709,12 @@ impl<'de, H> StringDeserializer<'de, H> {
         E: Error,
     {
         Error::invalid_type(
-            Unexpected::Str(self.interners.string.lookup(self.istring)),
+            Unexpected::Str(
+                self.interners
+                    .string
+                    .try_lookup(self.istring)
+                    .unwrap_or_default(),
+            ),
             exp,
         )
     }
@@ -768,7 +832,9 @@ impl<'de, H> Deserializer<'de> for StringDeserializer<'de, H> {
     where
         V: Visitor<'de>,
     {
-        visitor.visit_borrowed_str(self.interners.string.lookup(self.istring))
+        visitor.visit_borrowed_str(self.interners.string.try_lookup(self.istring).ok_or(
+            Error::custom("Interned<string> is out of bounds for this arena"),
+        )?)
     }
 
     fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -782,7 +848,9 @@ impl<'de, H> Deserializer<'de> for StringDeserializer<'de, H> {
     where
         V: Visitor<'de>,
     {
-        visitor.visit_bytes(self.interners.string.lookup_bytes(self.istring))
+        visitor.visit_bytes(self.interners.string.try_lookup_bytes(self.istring).ok_or(
+            Error::custom("Interned<string> is out of bounds for this arena"),
+        )?)
     }
 
     fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -1039,7 +1107,9 @@ where
     where
         E: Error,
     {
-        Ok(IValueImpl::i64_mut(self.interners, v))
+        IValueImpl::try_i64_mut(self.interners, v).ok_or(Error::custom(
+            "Arena<i64> is full, cannot push more values to it",
+        ))
     }
 
     fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
@@ -1047,9 +1117,9 @@ where
         E: Error,
     {
         if let Ok(u) = u64::try_from(v) {
-            Ok(IValueImpl::u64_mut(self.interners, u))
+            self.visit_u64(u)
         } else if let Ok(i) = i64::try_from(v) {
-            Ok(IValueImpl::i64_mut(self.interners, i))
+            self.visit_i64(i)
         } else {
             Err(Error::invalid_value(
                 Unexpected::Other(&format!("an integer out of range ({v})")),
@@ -1083,7 +1153,9 @@ where
     where
         E: Error,
     {
-        Ok(IValueImpl::u64_mut(self.interners, v))
+        IValueImpl::try_u64_mut(self.interners, v).ok_or(Error::custom(
+            "Arena<u64> is full, cannot push more values to it",
+        ))
     }
 
     fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
@@ -1091,7 +1163,7 @@ where
         E: Error,
     {
         if let Ok(u) = u64::try_from(v) {
-            Ok(IValueImpl::u64_mut(self.interners, u))
+            self.visit_u64(u)
         } else {
             Err(Error::invalid_value(
                 Unexpected::Other(&format!("an integer out of range ({v})")),
@@ -1104,14 +1176,18 @@ where
     where
         E: Error,
     {
-        Ok(IValueImpl::f64_mut(self.interners, v))
+        IValueImpl::try_f64_mut(self.interners, v).ok_or(Error::custom(
+            "Arena<f64> is full, cannot push more values to it",
+        ))
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
         E: Error,
     {
-        Ok(IValueImpl::String(self.interners.string.intern_mut(v)))
+        IValueImpl::try_string_mut(self.interners, v).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))
     }
 
     fn visit_none<E>(self) -> Result<Self::Value, E>
@@ -1147,9 +1223,11 @@ where
             a.push(IValue(ivalue));
         }
 
-        let iarray = self.interners.iarray.intern_copy_mut(&a);
+        let ivalue = IValueImpl::try_array_mut(self.interners, &a).ok_or(Error::custom(
+            "Arena<array> is full, cannot push more values to it",
+        ))?;
         self.buffers.push_array(a);
-        Ok(IValueImpl::Array(iarray))
+        Ok(ivalue)
     }
 
     fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -1167,10 +1245,11 @@ where
             o.push((key, IValue(ivalue)));
         }
 
-        o.sort_unstable_by_key(|(k, _)| *k);
-        let iobject = self.interners.iobject.intern_copy_mut(&o);
+        let ivalue = IValueImpl::try_object_mut(self.interners, &mut o).ok_or(Error::custom(
+            "Arena<object> is full, cannot push more values to it",
+        ))?;
         self.buffers.push_object(o);
-        Ok(IValueImpl::Object(iobject))
+        Ok(ivalue)
     }
 }
 
@@ -1252,7 +1331,9 @@ where
     where
         E: Error,
     {
-        Ok(InternedStrKey(self.interners.string.intern_mut(v)))
+        InternedStrKey::try_new_mut(self.interners, v).ok_or(Error::custom(
+            "Arena<string> is full, cannot push more values to it",
+        ))
     }
 
     fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
@@ -1412,7 +1493,9 @@ pub mod sync {
         where
             E: Error,
         {
-            Ok(IValueImpl::i64(self.interners, v))
+            IValueImpl::try_i64(self.interners, v).ok_or(Error::custom(
+                "Arena<i64> is full, cannot push more values to it",
+            ))
         }
 
         fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
@@ -1420,9 +1503,9 @@ pub mod sync {
             E: Error,
         {
             if let Ok(u) = u64::try_from(v) {
-                Ok(IValueImpl::u64(self.interners, u))
+                self.visit_u64(u)
             } else if let Ok(i) = i64::try_from(v) {
-                Ok(IValueImpl::i64(self.interners, i))
+                self.visit_i64(i)
             } else {
                 Err(Error::invalid_value(
                     Unexpected::Other(&format!("an integer out of range ({v})")),
@@ -1456,7 +1539,9 @@ pub mod sync {
         where
             E: Error,
         {
-            Ok(IValueImpl::u64(self.interners, v))
+            IValueImpl::try_u64(self.interners, v).ok_or(Error::custom(
+                "Arena<u64> is full, cannot push more values to it",
+            ))
         }
 
         fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
@@ -1464,7 +1549,7 @@ pub mod sync {
             E: Error,
         {
             if let Ok(u) = u64::try_from(v) {
-                Ok(IValueImpl::u64(self.interners, u))
+                self.visit_u64(u)
             } else {
                 Err(Error::invalid_value(
                     Unexpected::Other(&format!("an integer out of range ({v})")),
@@ -1477,14 +1562,18 @@ pub mod sync {
         where
             E: Error,
         {
-            Ok(IValueImpl::f64(self.interners, v))
+            IValueImpl::try_f64(self.interners, v).ok_or(Error::custom(
+                "Arena<f64> is full, cannot push more values to it",
+            ))
         }
 
         fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
         where
             E: Error,
         {
-            Ok(IValueImpl::String(self.interners.string.intern(v)))
+            IValueImpl::try_string(self.interners, v).ok_or(Error::custom(
+                "Arena<string> is full, cannot push more values to it",
+            ))
         }
 
         fn visit_none<E>(self) -> Result<Self::Value, E>
@@ -1520,9 +1609,11 @@ pub mod sync {
                 a.push(IValue(ivalue));
             }
 
-            let iarray = self.interners.iarray.intern_copy(&a);
+            let ivalue = IValueImpl::try_array(self.interners, &a).ok_or(Error::custom(
+                "Arena<array> is full, cannot push more values to it",
+            ))?;
             self.buffers.push_array(a);
-            Ok(IValueImpl::Array(iarray))
+            Ok(ivalue)
         }
 
         fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -1540,10 +1631,11 @@ pub mod sync {
                 o.push((key, IValue(ivalue)));
             }
 
-            o.sort_unstable_by_key(|(k, _)| *k);
-            let iobject = self.interners.iobject.intern_copy(&o);
+            let ivalue = IValueImpl::try_object(self.interners, &mut o).ok_or(Error::custom(
+                "Arena<object> is full, cannot push more values to it",
+            ))?;
             self.buffers.push_object(o);
-            Ok(IValueImpl::Object(iobject))
+            Ok(ivalue)
         }
     }
 
@@ -1625,7 +1717,9 @@ pub mod sync {
         where
             E: Error,
         {
-            Ok(InternedStrKey(self.interners.string.intern(v)))
+            InternedStrKey::try_new(self.interners, v).ok_or(Error::custom(
+                "Arena<string> is full, cannot push more values to it",
+            ))
         }
 
         fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
