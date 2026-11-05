@@ -3,8 +3,8 @@ use criterion::{
     BatchSize, Bencher, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use jinterner::{
-    BufferPool, HashbrownBuildHasher, IValue, InterningDeserializer, InterningDeserializerMut,
-    Jinterners, StdBuildHasher,
+    ArrayOrder, BufferPool, HashbrownBuildHasher, IValue, InterningDeserializer,
+    InterningDeserializerMut, Jinterners, StdBuildHasher,
 };
 use serde_json::Value;
 use std::fs::File;
@@ -124,14 +124,15 @@ fn parse_simd_json(bencher: &mut Bencher, input: &[u8]) {
 fn parse_jinterner<H: Default + BuildHasher>(bencher: &mut Bencher, input: &[u8]) {
     bencher.iter(|| {
         let jinterners: Jinterners<H> = Jinterners::default();
-        IValue::from_json_slice(black_box(input), &jinterners).unwrap();
+        IValue::from_json_slice(black_box(input), &jinterners, ArrayOrder::Preserve).unwrap();
     });
 }
 
 fn parse_jinterner_mut<H: Default + BuildHasher>(bencher: &mut Bencher, input: &[u8]) {
     bencher.iter(|| {
         let mut jinterners: Jinterners<H> = Jinterners::default();
-        IValue::from_json_slice_mut(black_box(input), &mut jinterners).unwrap()
+        IValue::from_json_slice_mut(black_box(input), &mut jinterners, ArrayOrder::Preserve)
+            .unwrap()
     });
 }
 
@@ -142,7 +143,12 @@ fn parse_jinterner_simd<H: Default + BuildHasher>(bencher: &mut Bencher, input: 
             let jinterners: Jinterners<H> = Jinterners::default();
             let mut json_de = simd_json::Deserializer::from_slice(i.as_mut_slice()).unwrap();
             let mut buffers = BufferPool::default();
-            let de = InterningDeserializer::new(&mut json_de, &jinterners, &mut buffers);
+            let de = InterningDeserializer::new(
+                &mut json_de,
+                &jinterners,
+                &mut buffers,
+                ArrayOrder::Preserve,
+            );
             de.deserialize().unwrap()
         },
         BatchSize::PerIteration,
@@ -156,7 +162,12 @@ fn parse_jinterner_simd_mut<H: Default + BuildHasher>(bencher: &mut Bencher, inp
             let mut jinterners: Jinterners<H> = Jinterners::default();
             let mut json_de = simd_json::Deserializer::from_slice(i.as_mut_slice()).unwrap();
             let mut buffers = BufferPool::default();
-            let de = InterningDeserializerMut::new(&mut json_de, &mut jinterners, &mut buffers);
+            let de = InterningDeserializerMut::new(
+                &mut json_de,
+                &mut jinterners,
+                &mut buffers,
+                ArrayOrder::Preserve,
+            );
             de.deserialize().unwrap()
         },
         BatchSize::PerIteration,

@@ -1,4 +1,4 @@
-use super::{BoundValue, IValue, IValueImpl, InternedStrKey};
+use super::{ArrayOrder, BoundValue, IValue, IValueImpl, InternedStrKey};
 use crate::{Buffer, BufferPool, Jinterners};
 use core::hash::BuildHasher;
 use serde::ser::{
@@ -12,6 +12,7 @@ use serde_json::error::Error;
 pub(super) struct ValueSerializer<'a, H> {
     pub interners: &'a Jinterners<H>,
     pub buffers: &'a mut BufferPool<H>,
+    pub array_order: ArrayOrder,
 }
 
 #[cfg(feature = "sync")]
@@ -161,6 +162,7 @@ where
         let value = IValue(value.serialize(ValueSerializer {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
         })?);
         IValueImpl::try_singleton(self.interners, key, value).ok_or(Error::custom(
             "Arena<object> is full, cannot push more values to it",
@@ -172,6 +174,7 @@ where
         Ok(SerializeArray {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
             array,
         })
     }
@@ -199,6 +202,7 @@ where
         Ok(SerializeArrayVariant {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
             variant,
             array,
         })
@@ -209,6 +213,7 @@ where
         Ok(SerializeObject {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
             object,
             key: None,
         })
@@ -233,6 +238,7 @@ where
         Ok(SerializeObjectVariant {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
             variant,
             object,
         })
@@ -243,6 +249,7 @@ where
 pub(super) struct SerializeArray<'a, H> {
     interners: &'a Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
     array: Buffer<IValue<H>>,
 }
 
@@ -261,14 +268,16 @@ where
         self.array.push(IValue(value.serialize(ValueSerializer {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
         })?));
         Ok(())
     }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        let ivalue = IValueImpl::try_array(self.interners, &self.array).ok_or(Error::custom(
-            "Arena<array> is full, cannot push more values to it",
-        ))?;
+    fn end(mut self) -> Result<Self::Ok, Self::Error> {
+        let ivalue = IValueImpl::try_array(self.interners, &mut self.array, self.array_order)
+            .ok_or(Error::custom(
+                "Arena<array> is full, cannot push more values to it",
+            ))?;
         self.buffers.push_array(self.array);
         Ok(ivalue)
     }
@@ -318,6 +327,7 @@ where
 pub(super) struct SerializeArrayVariant<'a, H> {
     interners: &'a Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
     variant: &'static str,
     array: Buffer<IValue<H>>,
 }
@@ -337,17 +347,20 @@ where
         self.array.push(IValue(value.serialize(ValueSerializer {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
         })?));
         Ok(())
     }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> {
+    fn end(mut self) -> Result<Self::Ok, Self::Error> {
         let key = InternedStrKey::try_new(self.interners, self.variant).ok_or(Error::custom(
             "Arena<string> is full, cannot push more values to it",
         ))?;
-        let value = IValue(IValueImpl::try_array(self.interners, &self.array).ok_or(
-            Error::custom("Arena<array> is full, cannot push more values to it"),
-        )?);
+        let value = IValue(
+            IValueImpl::try_array(self.interners, &mut self.array, self.array_order).ok_or(
+                Error::custom("Arena<array> is full, cannot push more values to it"),
+            )?,
+        );
         self.buffers.push_array(self.array);
 
         IValueImpl::try_singleton(self.interners, key, value).ok_or(Error::custom(
@@ -360,6 +373,7 @@ where
 pub(super) struct SerializeObject<'a, H> {
     interners: &'a Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
     object: Buffer<(InternedStrKey<H>, IValue<H>)>,
     key: Option<InternedStrKey<H>>,
 }
@@ -402,6 +416,7 @@ where
             IValue(value.serialize(ValueSerializer {
                 interners: self.interners,
                 buffers: self.buffers,
+                array_order: self.array_order,
             })?),
         ));
         Ok(())
@@ -445,6 +460,7 @@ where
 pub(super) struct SerializeObjectVariant<'a, H> {
     interners: &'a Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
     variant: &'static str,
     object: Buffer<(InternedStrKey<H>, IValue<H>)>,
 }
@@ -468,6 +484,7 @@ where
             IValue(value.serialize(ValueSerializer {
                 interners: self.interners,
                 buffers: self.buffers,
+                array_order: self.array_order,
             })?),
         ));
         Ok(())
@@ -685,6 +702,7 @@ where
 pub(super) struct ValueSerializerMut<'a, H> {
     pub interners: &'a mut Jinterners<H>,
     pub buffers: &'a mut BufferPool<H>,
+    pub array_order: ArrayOrder,
 }
 
 impl<'a, H> Serializer for ValueSerializerMut<'a, H>
@@ -833,6 +851,7 @@ where
         let value = IValue(value.serialize(ValueSerializerMut {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
         })?);
         IValueImpl::try_singleton_mut(self.interners, key, value).ok_or(Error::custom(
             "Arena<object> is full, cannot push more values to it",
@@ -844,6 +863,7 @@ where
         Ok(SerializeArrayMut {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
             array,
         })
     }
@@ -871,6 +891,7 @@ where
         Ok(SerializeArrayVariantMut {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
             variant,
             array,
         })
@@ -881,6 +902,7 @@ where
         Ok(SerializeObjectMut {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
             object,
             key: None,
         })
@@ -905,6 +927,7 @@ where
         Ok(SerializeObjectVariantMut {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
             variant,
             object,
         })
@@ -914,6 +937,7 @@ where
 pub(super) struct SerializeArrayMut<'a, H> {
     interners: &'a mut Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
     array: Buffer<IValue<H>>,
 }
 
@@ -931,14 +955,16 @@ where
         self.array.push(IValue(value.serialize(ValueSerializerMut {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
         })?));
         Ok(())
     }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        let ivalue = IValueImpl::try_array_mut(self.interners, &self.array).ok_or(
-            Error::custom("Arena<array> is full, cannot push more values to it"),
-        )?;
+    fn end(mut self) -> Result<Self::Ok, Self::Error> {
+        let ivalue = IValueImpl::try_array_mut(self.interners, &mut self.array, self.array_order)
+            .ok_or(Error::custom(
+            "Arena<array> is full, cannot push more values to it",
+        ))?;
         self.buffers.push_array(self.array);
         Ok(ivalue)
     }
@@ -985,6 +1011,7 @@ where
 pub(super) struct SerializeArrayVariantMut<'a, H> {
     interners: &'a mut Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
     variant: &'static str,
     array: Buffer<IValue<H>>,
 }
@@ -1003,18 +1030,19 @@ where
         self.array.push(IValue(value.serialize(ValueSerializerMut {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
         })?));
         Ok(())
     }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> {
+    fn end(mut self) -> Result<Self::Ok, Self::Error> {
         let key = InternedStrKey::try_new_mut(self.interners, self.variant).ok_or(
             Error::custom("Arena<string> is full, cannot push more values to it"),
         )?;
         let value = IValue(
-            IValueImpl::try_array_mut(self.interners, &self.array).ok_or(Error::custom(
-                "Arena<array> is full, cannot push more values to it",
-            ))?,
+            IValueImpl::try_array_mut(self.interners, &mut self.array, self.array_order).ok_or(
+                Error::custom("Arena<array> is full, cannot push more values to it"),
+            )?,
         );
         self.buffers.push_array(self.array);
 
@@ -1027,6 +1055,7 @@ where
 pub(super) struct SerializeObjectMut<'a, H> {
     interners: &'a mut Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
     object: Buffer<(InternedStrKey<H>, IValue<H>)>,
     key: Option<InternedStrKey<H>>,
 }
@@ -1068,6 +1097,7 @@ where
             IValue(value.serialize(ValueSerializerMut {
                 interners: self.interners,
                 buffers: self.buffers,
+                array_order: self.array_order,
             })?),
         ));
         Ok(())
@@ -1109,6 +1139,7 @@ where
 pub(super) struct SerializeObjectVariantMut<'a, H> {
     interners: &'a mut Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
     variant: &'static str,
     object: Buffer<(InternedStrKey<H>, IValue<H>)>,
 }
@@ -1131,6 +1162,7 @@ where
             IValue(value.serialize(ValueSerializerMut {
                 interners: self.interners,
                 buffers: self.buffers,
+                array_order: self.array_order,
             })?),
         ));
         Ok(())

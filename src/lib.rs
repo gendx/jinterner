@@ -45,7 +45,7 @@ pub use detail::InterningDeserializer;
 pub use detail::InterningDeserializerMut;
 pub use detail::mapping::Mapping;
 use detail::mapping::{MappingNoScalars, MappingScalars};
-pub use detail::{BoundValue, IValue, InternedStrKey, MapRef, ValueRef};
+pub use detail::{ArrayOrder, BoundValue, IValue, InternedStrKey, MapRef, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::{GetSize, GetSizeTracker};
 #[cfg(feature = "postcard-schema")]
@@ -352,8 +352,8 @@ where
     /// This function panics if the arena is full. Use
     /// [`try_intern()`](Self::try_intern) for a fallible API.
     #[cfg(feature = "sync")]
-    pub fn intern(&self, source: &Value) -> IValue<H> {
-        IValue::from(self, source)
+    pub fn intern(&self, source: &Value, array_order: ArrayOrder) -> IValue<H> {
+        IValue::from(self, source, array_order)
     }
 
     /// Interns the given [`serde_json::Value`] into this arena.
@@ -364,8 +364,8 @@ where
     /// efficient if you hold a mutable reference to this [`Jinterners`] arena
     /// as it avoids acquiring locks.
     #[cfg(feature = "sync")]
-    pub fn try_intern(&self, source: &Value) -> Option<IValue<H>> {
-        IValue::try_from(self, source)
+    pub fn try_intern(&self, source: &Value, array_order: ArrayOrder) -> Option<IValue<H>> {
+        IValue::try_from(self, source, array_order)
     }
 
     /// Interns the given [`serde_json::Value`] into this arena.
@@ -378,8 +378,8 @@ where
     ///
     /// This function panics if the arena is full. Use
     /// [`try_intern_mut()`](Self::try_intern_mut) for a fallible API.
-    pub fn intern_mut(&mut self, source: &Value) -> IValue<H> {
-        IValue::from_mut(self, source)
+    pub fn intern_mut(&mut self, source: &Value, array_order: ArrayOrder) -> IValue<H> {
+        IValue::from_mut(self, source, array_order)
     }
 
     /// Interns the given [`serde_json::Value`] into this arena.
@@ -389,8 +389,8 @@ where
     /// Contrary to [`try_intern()`](Self::try_intern), no locks are held
     /// internally because this function already takes an exclusive mutable
     /// reference to this [`Jinterners`] arena.
-    pub fn try_intern_mut(&mut self, source: &Value) -> Option<IValue<H>> {
-        IValue::try_from_mut(self, source)
+    pub fn try_intern_mut(&mut self, source: &Value, array_order: ArrayOrder) -> Option<IValue<H>> {
+        IValue::try_from_mut(self, source, array_order)
     }
 
     /// Retrieves the given interned value from this arena.
@@ -1421,24 +1421,30 @@ mod test {
     fn retain() {
         let mut interners: Jinterners = Jinterners::default();
 
-        let john = interners.intern_mut(&json!({
-            "name": "John",
-            "surname": "Doe",
-            "address": {
-                "number": 42,
-                "street": "Way",
-                "city": "Big City",
-            }
-        }));
-        let mary = interners.intern_mut(&json!({
-            "name": "Mary",
-            "surname": "Smith",
-            "address": {
-                "number": 123,
-                "square": "Central Square",
-                "city": "Small Town",
-            }
-        }));
+        let john = interners.intern_mut(
+            &json!({
+                "name": "John",
+                "surname": "Doe",
+                "address": {
+                    "number": 42,
+                    "street": "Way",
+                    "city": "Big City",
+                }
+            }),
+            ArrayOrder::Preserve,
+        );
+        let mary = interners.intern_mut(
+            &json!({
+                "name": "Mary",
+                "surname": "Smith",
+                "address": {
+                    "number": 123,
+                    "square": "Central Square",
+                    "city": "Small Town",
+                }
+            }),
+            ArrayOrder::Preserve,
+        );
 
         assert_eq!(
             interners.lookup(&mary),
@@ -1477,8 +1483,8 @@ mod test {
     fn test_optimize_strings() {
         let mut interners: Jinterners = Jinterners::default();
 
-        let mary = interners.intern_mut(&json!("Mary"));
-        let john = interners.intern_mut(&json!("John"));
+        let mary = interners.intern_mut(&json!("Mary"), ArrayOrder::Preserve);
+        let john = interners.intern_mut(&json!("John"), ArrayOrder::Preserve);
 
         // No optimization happens with a limit of zero.
         assert!(interners.optimize(Some(0)).is_none());
@@ -1498,8 +1504,8 @@ mod test {
     fn test_optimize_once_strings() {
         let mut interners: Jinterners = Jinterners::default();
 
-        let mary = interners.intern_mut(&json!("Mary"));
-        let john = interners.intern_mut(&json!("John"));
+        let mary = interners.intern_mut(&json!("Mary"), ArrayOrder::Preserve);
+        let john = interners.intern_mut(&json!("John"), ArrayOrder::Preserve);
 
         // Optimization sorts strings.
         let (interners, mapping) = interners.optimize_once().unwrap();
@@ -1517,26 +1523,32 @@ mod test {
     fn test_truncate() {
         let mut interners: Jinterners = Jinterners::default();
 
-        let john = interners.intern_mut(&json!({
-            "name": "John",
-            "surname": "Doe",
-            "address": {
-                "number": 42,
-                "street": "Way",
-                "city": "Big City",
-            }
-        }));
+        let john = interners.intern_mut(
+            &json!({
+                "name": "John",
+                "surname": "Doe",
+                "address": {
+                    "number": 42,
+                    "street": "Way",
+                    "city": "Big City",
+                }
+            }),
+            ArrayOrder::Preserve,
+        );
         let snapshot = interners.snapshot().mark();
 
-        interners.intern_mut(&json!({
-            "name": "Mary",
-            "surname": "Smith",
-            "address": {
-                "number": 123,
-                "square": "Central Square",
-                "city": "Small Town",
-            }
-        }));
+        interners.intern_mut(
+            &json!({
+                "name": "Mary",
+                "surname": "Smith",
+                "address": {
+                    "number": 123,
+                    "square": "Central Square",
+                    "city": "Small Town",
+                }
+            }),
+            ArrayOrder::Preserve,
+        );
 
         interners.truncate(snapshot);
         assert_eq!(

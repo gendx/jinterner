@@ -49,6 +49,17 @@ use serde_json::{Number, Value};
 #[cfg(all(feature = "serde", feature = "std"))]
 use std::io::{Read, Write};
 
+/// Configuration to indicate whether array elements are logically ordered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArrayOrder {
+    /// Array elements are logically ordered: the interner must preserve this
+    /// order.
+    Preserve,
+    /// Array elements form a logically unordered set: the interner can reorder
+    /// them to optimize the representation.
+    Unordered,
+}
+
 /// An [`IValue`] interned value together with a reference to the associated
 /// [`Jinterners`] arena.
 ///
@@ -687,8 +698,8 @@ where
     /// This function panics if the arena is full. Use
     /// [`try_array()`](Self::try_array) for a fallible API.
     #[cfg(feature = "sync")]
-    pub fn array(interners: &Jinterners<H>, a: &[Self]) -> Self {
-        Self(IValueImpl::array(interners, a))
+    pub fn array(interners: &Jinterners<H>, a: &mut [Self], order: ArrayOrder) -> Self {
+        Self(IValueImpl::array(interners, a, order))
     }
 
     /// Interns a JSON array, whose items are already interned.
@@ -699,8 +710,8 @@ where
     /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
     /// it avoids acquiring locks.
     #[cfg(feature = "sync")]
-    pub fn try_array(interners: &Jinterners<H>, a: &[Self]) -> Option<Self> {
-        IValueImpl::try_array(interners, a).map(Self)
+    pub fn try_array(interners: &Jinterners<H>, a: &mut [Self], order: ArrayOrder) -> Option<Self> {
+        IValueImpl::try_array(interners, a, order).map(Self)
     }
 
     /// Interns a JSON array, whose items are already interned.
@@ -713,8 +724,8 @@ where
     ///
     /// This function panics if the arena is full. Use
     /// [`try_array_mut()`](Self::try_array_mut) for a fallible API.
-    pub fn array_mut(interners: &mut Jinterners<H>, a: &[Self]) -> Self {
-        Self(IValueImpl::array_mut(interners, a))
+    pub fn array_mut(interners: &mut Jinterners<H>, a: &mut [Self], order: ArrayOrder) -> Self {
+        Self(IValueImpl::array_mut(interners, a, order))
     }
 
     /// Interns a JSON array, whose items are already interned.
@@ -724,8 +735,12 @@ where
     /// Contrary to [`try_array()`](Self::try_array), no locks are held
     /// internally because this function already takes an exclusive mutable
     /// reference to the [`Jinterners`] arena.
-    pub fn try_array_mut(interners: &mut Jinterners<H>, a: &[Self]) -> Option<Self> {
-        IValueImpl::try_array_mut(interners, a).map(Self)
+    pub fn try_array_mut(
+        interners: &mut Jinterners<H>,
+        a: &mut [Self],
+        order: ArrayOrder,
+    ) -> Option<Self> {
+        IValueImpl::try_array_mut(interners, a, order).map(Self)
     }
 
     /// Interns a JSON object, whose values are already interned.
@@ -876,21 +891,33 @@ where
     }
 
     #[cfg(feature = "sync")]
-    pub(crate) fn from(interners: &Jinterners<H>, source: &Value) -> Self {
-        Self(IValueImpl::from(interners, source))
+    pub(crate) fn from(interners: &Jinterners<H>, source: &Value, array_order: ArrayOrder) -> Self {
+        Self(IValueImpl::from(interners, source, array_order))
     }
 
     #[cfg(feature = "sync")]
-    pub(crate) fn try_from(interners: &Jinterners<H>, source: &Value) -> Option<Self> {
-        IValueImpl::try_from(interners, source).map(Self)
+    pub(crate) fn try_from(
+        interners: &Jinterners<H>,
+        source: &Value,
+        array_order: ArrayOrder,
+    ) -> Option<Self> {
+        IValueImpl::try_from(interners, source, array_order).map(Self)
     }
 
-    pub(crate) fn from_mut(interners: &mut Jinterners<H>, source: &Value) -> Self {
-        Self(IValueImpl::from_mut(interners, source))
+    pub(crate) fn from_mut(
+        interners: &mut Jinterners<H>,
+        source: &Value,
+        array_order: ArrayOrder,
+    ) -> Self {
+        Self(IValueImpl::from_mut(interners, source, array_order))
     }
 
-    pub(crate) fn try_from_mut(interners: &mut Jinterners<H>, source: &Value) -> Option<Self> {
-        IValueImpl::try_from_mut(interners, source).map(Self)
+    pub(crate) fn try_from_mut(
+        interners: &mut Jinterners<H>,
+        source: &Value,
+        array_order: ArrayOrder,
+    ) -> Option<Self> {
+        IValueImpl::try_from_mut(interners, source, array_order).map(Self)
     }
 
     pub(crate) fn lookup(&self, interners: &Jinterners<H>) -> Value {
@@ -922,6 +949,7 @@ where
     pub fn from_value<T>(
         value: T,
         interners: &Jinterners<H>,
+        array_order: ArrayOrder,
     ) -> Result<Self, serde_json::error::Error>
     where
         T: Serialize,
@@ -930,6 +958,7 @@ where
             .serialize(ValueSerializer {
                 interners,
                 buffers: &mut BufferPool::default(),
+                array_order,
             })
             .map(IValue)
     }
@@ -944,6 +973,7 @@ where
     pub fn from_value_mut<T>(
         value: T,
         interners: &mut Jinterners<H>,
+        array_order: ArrayOrder,
     ) -> Result<Self, serde_json::error::Error>
     where
         T: Serialize,
@@ -952,6 +982,7 @@ where
             .serialize(ValueSerializerMut {
                 interners,
                 buffers: &mut BufferPool::default(),
+                array_order,
             })
             .map(IValue)
     }
@@ -983,10 +1014,11 @@ where
     pub fn from_json_slice(
         json: &[u8],
         interners: &Jinterners<H>,
+        array_order: ArrayOrder,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_slice(json);
         let mut buffers = BufferPool::default();
-        let de = InterningDeserializer::new(&mut json_de, interners, &mut buffers);
+        let de = InterningDeserializer::new(&mut json_de, interners, &mut buffers, array_order);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -1003,10 +1035,11 @@ where
     pub fn from_json_str(
         json: &str,
         interners: &Jinterners<H>,
+        array_order: ArrayOrder,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_str(json);
         let mut buffers = BufferPool::default();
-        let de = InterningDeserializer::new(&mut json_de, interners, &mut buffers);
+        let de = InterningDeserializer::new(&mut json_de, interners, &mut buffers, array_order);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -1023,10 +1056,11 @@ where
     pub fn from_json_reader<R: Read>(
         json: R,
         interners: &Jinterners<H>,
+        array_order: ArrayOrder,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_reader(json);
         let mut buffers = BufferPool::default();
-        let de = InterningDeserializer::new(&mut json_de, interners, &mut buffers);
+        let de = InterningDeserializer::new(&mut json_de, interners, &mut buffers, array_order);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -1043,10 +1077,11 @@ where
     pub fn from_json_slice_mut(
         json: &[u8],
         interners: &mut Jinterners<H>,
+        array_order: ArrayOrder,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_slice(json);
         let mut buffers = BufferPool::default();
-        let de = InterningDeserializerMut::new(&mut json_de, interners, &mut buffers);
+        let de = InterningDeserializerMut::new(&mut json_de, interners, &mut buffers, array_order);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -1063,10 +1098,11 @@ where
     pub fn from_json_str_mut(
         json: &str,
         interners: &mut Jinterners<H>,
+        array_order: ArrayOrder,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_str(json);
         let mut buffers = BufferPool::default();
-        let de = InterningDeserializerMut::new(&mut json_de, interners, &mut buffers);
+        let de = InterningDeserializerMut::new(&mut json_de, interners, &mut buffers, array_order);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -1083,10 +1119,11 @@ where
     pub fn from_json_reader_mut<R: Read>(
         json: R,
         interners: &mut Jinterners<H>,
+        array_order: ArrayOrder,
     ) -> Result<Self, serde_json::error::Error> {
         let mut json_de = SerdeJsonDeserializer::from_reader(json);
         let mut buffers = BufferPool::default();
-        let de = InterningDeserializerMut::new(&mut json_de, interners, &mut buffers);
+        let de = InterningDeserializerMut::new(&mut json_de, interners, &mut buffers, array_order);
         let value = de.deserialize()?;
         json_de.end()?;
         Ok(value)
@@ -1623,20 +1660,52 @@ where
     }
 
     #[cfg(feature = "sync")]
-    fn array(interners: &Jinterners<H>, a: &[IValue<H>]) -> Self {
+    fn array(interners: &Jinterners<H>, a: &mut [IValue<H>], order: ArrayOrder) -> Self {
+        match order {
+            ArrayOrder::Preserve => (),
+            ArrayOrder::Unordered => {
+                a.sort_unstable();
+            }
+        }
         IValueImpl::Array(interners.iarray.intern_copy(a))
     }
 
     #[cfg(feature = "sync")]
-    fn try_array(interners: &Jinterners<H>, a: &[IValue<H>]) -> Option<Self> {
+    fn try_array(
+        interners: &Jinterners<H>,
+        a: &mut [IValue<H>],
+        order: ArrayOrder,
+    ) -> Option<Self> {
+        match order {
+            ArrayOrder::Preserve => (),
+            ArrayOrder::Unordered => {
+                a.sort_unstable();
+            }
+        }
         interners.iarray.try_intern_copy(a).map(IValueImpl::Array)
     }
 
-    fn array_mut(interners: &mut Jinterners<H>, a: &[IValue<H>]) -> Self {
+    fn array_mut(interners: &mut Jinterners<H>, a: &mut [IValue<H>], order: ArrayOrder) -> Self {
+        match order {
+            ArrayOrder::Preserve => (),
+            ArrayOrder::Unordered => {
+                a.sort_unstable();
+            }
+        }
         IValueImpl::Array(interners.iarray.intern_copy_mut(a))
     }
 
-    fn try_array_mut(interners: &mut Jinterners<H>, a: &[IValue<H>]) -> Option<Self> {
+    fn try_array_mut(
+        interners: &mut Jinterners<H>,
+        a: &mut [IValue<H>],
+        order: ArrayOrder,
+    ) -> Option<Self> {
+        match order {
+            ArrayOrder::Preserve => (),
+            ArrayOrder::Unordered => {
+                a.sort_unstable();
+            }
+        }
         interners
             .iarray
             .try_intern_copy_mut(a)
@@ -1700,7 +1769,7 @@ where
     }
 
     #[cfg(feature = "sync")]
-    fn from(interners: &Jinterners<H>, source: &Value) -> Self {
+    fn from(interners: &Jinterners<H>, source: &Value, array_order: ArrayOrder) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
             Value::Bool(x) => IValueImpl::Bool(*x),
@@ -1716,7 +1785,11 @@ where
             Value::String(s) => IValueImpl::string(interners, s.as_str()),
             Value::Array(a) => IValueImpl::array(
                 interners,
-                &a.iter().map(|v| interners.intern(v)).collect::<Box<[_]>>(),
+                &mut a
+                    .iter()
+                    .map(|v| interners.intern(v, array_order))
+                    .collect::<Box<[_]>>(),
+                array_order,
             ),
             Value::Object(o) => IValueImpl::object(
                 interners,
@@ -1725,7 +1798,7 @@ where
                     .map(|(k, v)| {
                         (
                             InternedStrKey::new(interners, k.as_str()),
-                            interners.intern(v),
+                            interners.intern(v, array_order),
                         )
                     })
                     .collect::<Box<[_]>>(),
@@ -1734,7 +1807,11 @@ where
     }
 
     #[cfg(feature = "sync")]
-    fn try_from(interners: &Jinterners<H>, source: &Value) -> Option<Self> {
+    fn try_from(
+        interners: &Jinterners<H>,
+        source: &Value,
+        array_order: ArrayOrder,
+    ) -> Option<Self> {
         match source {
             Value::Null => Some(IValueImpl::Null),
             Value::Bool(x) => Some(IValueImpl::Bool(*x)),
@@ -1750,9 +1827,11 @@ where
             Value::String(s) => IValueImpl::try_string(interners, s.as_str()),
             Value::Array(a) => IValueImpl::try_array(
                 interners,
-                &a.iter()
-                    .map(|v| interners.try_intern(v))
+                &mut a
+                    .iter()
+                    .map(|v| interners.try_intern(v, array_order))
                     .collect::<Option<Box<[_]>>>()?,
+                array_order,
             ),
             Value::Object(o) => IValueImpl::try_object(
                 interners,
@@ -1761,7 +1840,7 @@ where
                     .map(|(k, v)| {
                         Some((
                             InternedStrKey::try_new(interners, k.as_str())?,
-                            interners.try_intern(v)?,
+                            interners.try_intern(v, array_order)?,
                         ))
                     })
                     .collect::<Option<Box<[_]>>>()?,
@@ -1769,7 +1848,7 @@ where
         }
     }
 
-    fn from_mut(interners: &mut Jinterners<H>, source: &Value) -> Self {
+    fn from_mut(interners: &mut Jinterners<H>, source: &Value, array_order: ArrayOrder) -> Self {
         match source {
             Value::Null => IValueImpl::Null,
             Value::Bool(x) => IValueImpl::Bool(*x),
@@ -1784,11 +1863,11 @@ where
             }
             Value::String(s) => IValueImpl::string_mut(interners, s.as_str()),
             Value::Array(a) => {
-                let a = a
+                let mut a = a
                     .iter()
-                    .map(|v| interners.intern_mut(v))
+                    .map(|v| interners.intern_mut(v, array_order))
                     .collect::<Box<[_]>>();
-                IValueImpl::array_mut(interners, &a)
+                IValueImpl::array_mut(interners, &mut a, array_order)
             }
             Value::Object(o) => {
                 let mut o = o
@@ -1796,7 +1875,7 @@ where
                     .map(|(k, v)| {
                         (
                             InternedStrKey::new_mut(interners, k.as_str()),
-                            interners.intern_mut(v),
+                            interners.intern_mut(v, array_order),
                         )
                     })
                     .collect::<Box<[_]>>();
@@ -1805,7 +1884,11 @@ where
         }
     }
 
-    fn try_from_mut(interners: &mut Jinterners<H>, source: &Value) -> Option<Self> {
+    fn try_from_mut(
+        interners: &mut Jinterners<H>,
+        source: &Value,
+        array_order: ArrayOrder,
+    ) -> Option<Self> {
         match source {
             Value::Null => Some(IValueImpl::Null),
             Value::Bool(x) => Some(IValueImpl::Bool(*x)),
@@ -1820,11 +1903,11 @@ where
             }
             Value::String(s) => IValueImpl::try_string_mut(interners, s.as_str()),
             Value::Array(a) => {
-                let a: Box<[_]> = a
+                let mut a = a
                     .iter()
-                    .map(|v| interners.try_intern_mut(v))
-                    .collect::<Option<_>>()?;
-                IValueImpl::try_array_mut(interners, &a)
+                    .map(|v| interners.try_intern_mut(v, array_order))
+                    .collect::<Option<Box<[_]>>>()?;
+                IValueImpl::try_array_mut(interners, &mut a, array_order)
             }
             Value::Object(o) => {
                 let mut o = o
@@ -1832,7 +1915,7 @@ where
                     .map(|(k, v)| {
                         Some((
                             InternedStrKey::try_new_mut(interners, k.as_str())?,
-                            interners.try_intern_mut(v)?,
+                            interners.try_intern_mut(v, array_order)?,
                         ))
                     })
                     .collect::<Option<Box<[_]>>>()?;
@@ -2468,7 +2551,8 @@ mod serde_test {
         let interners: Jinterners = Jinterners::default();
 
         let original = make_foo();
-        let ivalue = IValue::from_value(&original, &interners).expect("Failed to intern value");
+        let ivalue = IValue::from_value(&original, &interners, ArrayOrder::Preserve)
+            .expect("Failed to intern value");
 
         let json = ivalue.lookup(&interners);
         assert_eq!(
@@ -2504,8 +2588,8 @@ mod serde_test {
         let mut interners: Jinterners = Jinterners::default();
 
         let original = make_foo();
-        let ivalue =
-            IValue::from_value_mut(&original, &mut interners).expect("Failed to intern value");
+        let ivalue = IValue::from_value_mut(&original, &mut interners, ArrayOrder::Preserve)
+            .expect("Failed to intern value");
 
         let json = ivalue.lookup(&interners);
         assert_eq!(
@@ -2557,7 +2641,7 @@ mod serde_test {
                 "world": {"Second": [42, -123]},
             }
         });
-        let ivalue = interners.intern_mut(&json);
+        let ivalue = interners.intern_mut(&json, ArrayOrder::Preserve);
 
         let small_foo: SmallFoo = ivalue
             .to_value(&interners)
@@ -2577,7 +2661,8 @@ mod serde_test {
         ]
         .into_iter()
         .collect();
-        let ivalue = IValue::from_value(&original, &interners).expect("Failed to intern value");
+        let ivalue = IValue::from_value(&original, &interners, ArrayOrder::Preserve)
+            .expect("Failed to intern value");
 
         let json = ivalue.lookup(&interners);
         assert_eq!(
@@ -2606,8 +2691,8 @@ mod serde_test {
         ]
         .into_iter()
         .collect();
-        let ivalue =
-            IValue::from_value_mut(&original, &mut interners).expect("Failed to intern value");
+        let ivalue = IValue::from_value_mut(&original, &mut interners, ArrayOrder::Preserve)
+            .expect("Failed to intern value");
 
         let json = ivalue.lookup(&interners);
         assert_eq!(
@@ -2637,7 +2722,8 @@ mod serde_test {
         ]
         .into_iter()
         .collect();
-        let ivalue = IValue::from_value(&original, &interners).expect("Failed to intern value");
+        let ivalue = IValue::from_value(&original, &interners, ArrayOrder::Preserve)
+            .expect("Failed to intern value");
 
         let json = ivalue.lookup(&interners);
         assert_eq!(
@@ -2666,8 +2752,8 @@ mod serde_test {
         ]
         .into_iter()
         .collect();
-        let ivalue =
-            IValue::from_value_mut(&original, &mut interners).expect("Failed to intern value");
+        let ivalue = IValue::from_value_mut(&original, &mut interners, ArrayOrder::Preserve)
+            .expect("Failed to intern value");
 
         let json = ivalue.lookup(&interners);
         assert_eq!(
@@ -2690,8 +2776,8 @@ mod serde_test {
         let mut interners: Jinterners = Jinterners::default();
 
         let original = make_foo();
-        let ivalue =
-            IValue::from_value_mut(&original, &mut interners).expect("Failed to intern value");
+        let ivalue = IValue::from_value_mut(&original, &mut interners, ArrayOrder::Preserve)
+            .expect("Failed to intern value");
 
         let json = ivalue.to_json_string(&interners);
         assert_eq!(

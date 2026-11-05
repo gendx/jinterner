@@ -1,4 +1,4 @@
-use super::{IValue, IValueImpl, InternedStrKey};
+use super::{ArrayOrder, IValue, IValueImpl, InternedStrKey};
 use crate::{BufferPool, Jinterners};
 use alloc::format;
 use alloc::string::String;
@@ -983,13 +983,18 @@ impl<'de, H> Deserializer<'de> for StringDeserializer<'de, H> {
 /// exclusive mutable reference to the [`Jinterners`] arena.
 ///
 /// ```
-/// # use jinterner::{BufferPool, IValue, InterningDeserializerMut, Jinterners};
+/// # use jinterner::{ArrayOrder, BufferPool, IValue, InterningDeserializerMut, Jinterners};
 /// let mut interners: Jinterners = Jinterners::default();
 ///
 /// let json = r#"{"foo":42,"bar":"Hello world"}"#;
 /// let mut json_de = serde_json::Deserializer::from_str(json);
 /// let mut buffers = BufferPool::default();
-/// let de = InterningDeserializerMut::new(&mut json_de, &mut interners, &mut buffers);
+/// let de = InterningDeserializerMut::new(
+///     &mut json_de,
+///     &mut interners,
+///     &mut buffers,
+///     ArrayOrder::Preserve,
+/// );
 /// let value = de.deserialize().unwrap();
 /// // Make sure the whole input was consumed.
 /// json_de.end().unwrap();
@@ -1004,16 +1009,23 @@ impl<'de, H> Deserializer<'de> for StringDeserializer<'de, H> {
 pub struct InterningDeserializerMut<'a, D, H = DefaultBuildHasher> {
     interners: &'a mut Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
     inner: D,
 }
 
 impl<'a, D, H> InterningDeserializerMut<'a, D, H> {
     /// Binds a deserializer with the given [`Jinterners`] arena.
-    pub fn new(inner: D, interners: &'a mut Jinterners<H>, buffers: &'a mut BufferPool<H>) -> Self {
+    pub fn new(
+        inner: D,
+        interners: &'a mut Jinterners<H>,
+        buffers: &'a mut BufferPool<H>,
+        array_order: ArrayOrder,
+    ) -> Self {
         Self {
             inner,
             interners,
             buffers,
+            array_order,
         }
     }
 }
@@ -1025,24 +1037,36 @@ where
 {
     /// Deserialize an [`IValue`].
     pub fn deserialize(self) -> Result<IValue<H>, D::Error> {
-        InterningDeserializerImplMut::new(self.inner, self.interners, self.buffers)
-            .deserialize()
-            .map(IValue)
+        InterningDeserializerImplMut::new(
+            self.inner,
+            self.interners,
+            self.buffers,
+            self.array_order,
+        )
+        .deserialize()
+        .map(IValue)
     }
 }
 
 struct InterningDeserializerImplMut<'a, D, H> {
     interners: &'a mut Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
     inner: D,
 }
 
 impl<'a, D, H> InterningDeserializerImplMut<'a, D, H> {
-    fn new(inner: D, interners: &'a mut Jinterners<H>, buffers: &'a mut BufferPool<H>) -> Self {
+    fn new(
+        inner: D,
+        interners: &'a mut Jinterners<H>,
+        buffers: &'a mut BufferPool<H>,
+        array_order: ArrayOrder,
+    ) -> Self {
         Self {
             inner,
             interners,
             buffers,
+            array_order,
         }
     }
 }
@@ -1056,6 +1080,7 @@ where
         self.inner.deserialize_any(InterningVisitorMut {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
         })
     }
 }
@@ -1063,6 +1088,7 @@ where
 struct InterningVisitorMut<'a, H> {
     interners: &'a mut Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
 }
 
 impl<'a, 'de, H> Visitor<'de> for InterningVisitorMut<'a, H>
@@ -1201,7 +1227,13 @@ where
     where
         D: Deserializer<'de>,
     {
-        InterningDeserializerImplMut::new(deserializer, self.interners, self.buffers).deserialize()
+        InterningDeserializerImplMut::new(
+            deserializer,
+            self.interners,
+            self.buffers,
+            self.array_order,
+        )
+        .deserialize()
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E>
@@ -1219,13 +1251,14 @@ where
         while let Some(ivalue) = seq.next_element_seed(InterningDeserializeSeedMut {
             interners: self.interners,
             buffers: self.buffers,
+            array_order: self.array_order,
         })? {
             a.push(IValue(ivalue));
         }
 
-        let ivalue = IValueImpl::try_array_mut(self.interners, &a).ok_or(Error::custom(
-            "Arena<array> is full, cannot push more values to it",
-        ))?;
+        let ivalue = IValueImpl::try_array_mut(self.interners, &mut a, self.array_order).ok_or(
+            Error::custom("Arena<array> is full, cannot push more values to it"),
+        )?;
         self.buffers.push_array(a);
         Ok(ivalue)
     }
@@ -1241,6 +1274,7 @@ where
             let ivalue = map.next_value_seed(InterningDeserializeSeedMut {
                 interners: self.interners,
                 buffers: self.buffers,
+                array_order: self.array_order,
             })?;
             o.push((key, IValue(ivalue)));
         }
@@ -1256,6 +1290,7 @@ where
 struct InterningDeserializeSeedMut<'a, H> {
     interners: &'a mut Jinterners<H>,
     buffers: &'a mut BufferPool<H>,
+    array_order: ArrayOrder,
 }
 
 impl<'a, 'de, H> DeserializeSeed<'de> for InterningDeserializeSeedMut<'a, H>
@@ -1268,7 +1303,13 @@ where
     where
         D: Deserializer<'de>,
     {
-        InterningDeserializerImplMut::new(deserializer, self.interners, self.buffers).deserialize()
+        InterningDeserializerImplMut::new(
+            deserializer,
+            self.interners,
+            self.buffers,
+            self.array_order,
+        )
+        .deserialize()
     }
 }
 
@@ -1366,13 +1407,14 @@ pub mod sync {
     /// acquiring locks.
     ///
     /// ```
-    /// # use jinterner::{BufferPool, IValue, InterningDeserializer, Jinterners};
+    /// # use jinterner::{ArrayOrder, BufferPool, IValue, InterningDeserializer, Jinterners};
     /// let interners: Jinterners = Jinterners::default();
     ///
     /// let json = r#"{"foo":42,"bar":"Hello world"}"#;
     /// let mut json_de = serde_json::Deserializer::from_str(json);
     /// let mut buffers = BufferPool::default();
-    /// let de = InterningDeserializer::new(&mut json_de, &interners, &mut buffers);
+    /// let de =
+    ///     InterningDeserializer::new(&mut json_de, &interners, &mut buffers, ArrayOrder::Preserve);
     /// let value = de.deserialize().unwrap();
     /// // Make sure the whole input was consumed.
     /// json_de.end().unwrap();
@@ -1390,16 +1432,23 @@ pub mod sync {
     pub struct InterningDeserializer<'a, D, H = DefaultBuildHasher> {
         interners: &'a Jinterners<H>,
         buffers: &'a mut BufferPool<H>,
+        array_order: ArrayOrder,
         inner: D,
     }
 
     impl<'a, D, H> InterningDeserializer<'a, D, H> {
         /// Binds a deserializer with the given [`Jinterners`] arena.
-        pub fn new(inner: D, interners: &'a Jinterners<H>, buffers: &'a mut BufferPool<H>) -> Self {
+        pub fn new(
+            inner: D,
+            interners: &'a Jinterners<H>,
+            buffers: &'a mut BufferPool<H>,
+            array_order: ArrayOrder,
+        ) -> Self {
             Self {
                 inner,
                 interners,
                 buffers,
+                array_order,
             }
         }
     }
@@ -1411,24 +1460,36 @@ pub mod sync {
     {
         /// Deserialize an [`IValue`].
         pub fn deserialize(self) -> Result<IValue<H>, D::Error> {
-            InterningDeserializerImpl::new(self.inner, self.interners, self.buffers)
-                .deserialize()
-                .map(IValue)
+            InterningDeserializerImpl::new(
+                self.inner,
+                self.interners,
+                self.buffers,
+                self.array_order,
+            )
+            .deserialize()
+            .map(IValue)
         }
     }
 
     struct InterningDeserializerImpl<'a, D, H> {
         interners: &'a Jinterners<H>,
         buffers: &'a mut BufferPool<H>,
+        array_order: ArrayOrder,
         inner: D,
     }
 
     impl<'a, D, H> InterningDeserializerImpl<'a, D, H> {
-        fn new(inner: D, interners: &'a Jinterners<H>, buffers: &'a mut BufferPool<H>) -> Self {
+        fn new(
+            inner: D,
+            interners: &'a Jinterners<H>,
+            buffers: &'a mut BufferPool<H>,
+            array_order: ArrayOrder,
+        ) -> Self {
             Self {
                 inner,
                 interners,
                 buffers,
+                array_order,
             }
         }
     }
@@ -1442,6 +1503,7 @@ pub mod sync {
             self.inner.deserialize_any(InterningVisitor {
                 interners: self.interners,
                 buffers: self.buffers,
+                array_order: self.array_order,
             })
         }
     }
@@ -1449,6 +1511,7 @@ pub mod sync {
     struct InterningVisitor<'a, H> {
         interners: &'a Jinterners<H>,
         buffers: &'a mut BufferPool<H>,
+        array_order: ArrayOrder,
     }
 
     impl<'a, 'de, H> Visitor<'de> for InterningVisitor<'a, H>
@@ -1587,7 +1650,13 @@ pub mod sync {
         where
             D: Deserializer<'de>,
         {
-            InterningDeserializerImpl::new(deserializer, self.interners, self.buffers).deserialize()
+            InterningDeserializerImpl::new(
+                deserializer,
+                self.interners,
+                self.buffers,
+                self.array_order,
+            )
+            .deserialize()
         }
 
         fn visit_unit<E>(self) -> Result<Self::Value, E>
@@ -1605,13 +1674,14 @@ pub mod sync {
             while let Some(ivalue) = seq.next_element_seed(InterningDeserializeSeed {
                 interners: self.interners,
                 buffers: self.buffers,
+                array_order: self.array_order,
             })? {
                 a.push(IValue(ivalue));
             }
 
-            let ivalue = IValueImpl::try_array(self.interners, &a).ok_or(Error::custom(
-                "Arena<array> is full, cannot push more values to it",
-            ))?;
+            let ivalue = IValueImpl::try_array(self.interners, &mut a, self.array_order).ok_or(
+                Error::custom("Arena<array> is full, cannot push more values to it"),
+            )?;
             self.buffers.push_array(a);
             Ok(ivalue)
         }
@@ -1627,6 +1697,7 @@ pub mod sync {
                 let ivalue = map.next_value_seed(InterningDeserializeSeed {
                     interners: self.interners,
                     buffers: self.buffers,
+                    array_order: self.array_order,
                 })?;
                 o.push((key, IValue(ivalue)));
             }
@@ -1642,6 +1713,7 @@ pub mod sync {
     struct InterningDeserializeSeed<'a, H> {
         interners: &'a Jinterners<H>,
         buffers: &'a mut BufferPool<H>,
+        array_order: ArrayOrder,
     }
 
     impl<'a, 'de, H> DeserializeSeed<'de> for InterningDeserializeSeed<'a, H>
@@ -1654,7 +1726,13 @@ pub mod sync {
         where
             D: Deserializer<'de>,
         {
-            InterningDeserializerImpl::new(deserializer, self.interners, self.buffers).deserialize()
+            InterningDeserializerImpl::new(
+                deserializer,
+                self.interners,
+                self.buffers,
+                self.array_order,
+            )
+            .deserialize()
         }
     }
 

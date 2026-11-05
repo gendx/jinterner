@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use jinterner::{
-    BufferPool, HashbrownBuildHasher, IValue, InterningDeserializer, InterningDeserializerMut,
-    Jinterners, StdBuildHasher,
+    ArrayOrder, BufferPool, HashbrownBuildHasher, IValue, InterningDeserializer,
+    InterningDeserializerMut, Jinterners, StdBuildHasher,
 };
 use serde::Deserializer;
 use std::fs::File;
@@ -32,6 +32,10 @@ struct Cli {
     /// Whether to use `simd-json` for parsing instead of `serde_json`.
     #[arg(long, default_value_t = false)]
     simd: bool,
+
+    /// Whether to treat arrays as unordered sets.
+    #[arg(long, default_value_t = false)]
+    unordered_arrays: bool,
 }
 
 /// Hash function.
@@ -82,16 +86,27 @@ impl Cli {
         D: Deserializer<'de>,
         D::Error: Send + Sync + 'static,
     {
+        let array_order = if self.unordered_arrays {
+            ArrayOrder::Unordered
+        } else {
+            ArrayOrder::Preserve
+        };
         if self.sync {
             let jinterners = Jinterners::<H>::default();
             let mut buffers = BufferPool::default();
-            let de = InterningDeserializer::new(deserializer, &jinterners, &mut buffers);
+            let de =
+                InterningDeserializer::new(deserializer, &jinterners, &mut buffers, array_order);
             let ivalue = de.deserialize()?;
             Ok((jinterners, ivalue))
         } else {
             let mut jinterners = Jinterners::<H>::default();
             let mut buffers = BufferPool::default();
-            let de = InterningDeserializerMut::new(deserializer, &mut jinterners, &mut buffers);
+            let de = InterningDeserializerMut::new(
+                deserializer,
+                &mut jinterners,
+                &mut buffers,
+                array_order,
+            );
             let ivalue = de.deserialize()?;
             Ok((jinterners, ivalue))
         }

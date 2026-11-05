@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use jinterner::{IValue, Jinterners};
+use jinterner::{ArrayOrder, IValue, Jinterners};
 use rstest::rstest;
 use serde::Serialize;
 use std::fs::File;
@@ -24,7 +24,7 @@ fn test_intern(#[files("data/**/*.json")] mut path: PathBuf) -> Result<()> {
             .with_context(|| format!("Failed to read file data/{name}.json"))?,
     );
     let mut jinterners = Jinterners::default();
-    let ivalue = IValue::from_json_reader_mut(file, &mut jinterners)
+    let ivalue = IValue::from_json_reader_mut(file, &mut jinterners, ArrayOrder::Preserve)
         .with_context(|| format!("Failed to deserialize file data/{name}.json"))?;
 
     let serialized = postcard::to_stdvec(&InternedFile { jinterners, ivalue })
@@ -58,7 +58,7 @@ fn test_optimize(#[files("data/**/*.json")] mut path: PathBuf) -> Result<()> {
             .with_context(|| format!("Failed to read file data/{name}.json"))?,
     );
     let mut jinterners = Jinterners::default();
-    let ivalue = IValue::from_json_reader_mut(file, &mut jinterners)
+    let ivalue = IValue::from_json_reader_mut(file, &mut jinterners, ArrayOrder::Preserve)
         .with_context(|| format!("Failed to deserialize file data/{name}.json"))?;
 
     let (jinterners, ivalue) = match jinterners.optimize(None) {
