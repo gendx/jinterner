@@ -8,6 +8,13 @@ use serde::ser::{
 use serde::{Serialize, Serializer};
 use serde_json::error::Error;
 
+fn make_array_error(array_order: ArrayOrder) -> Error {
+    Error::custom(match array_order {
+        ArrayOrder::Preserve => "Arena<array> is full, cannot push more values to it",
+        ArrayOrder::Unordered => "Arena<set> is full, cannot push more values to it",
+    })
+}
+
 #[cfg(feature = "sync")]
 pub(super) struct ValueSerializer<'a, H> {
     pub interners: &'a Jinterners<H>,
@@ -275,9 +282,7 @@ where
 
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
         let ivalue = IValueImpl::try_array(self.interners, &mut self.array, self.array_order)
-            .ok_or(Error::custom(
-                "Arena<array> is full, cannot push more values to it",
-            ))?;
+            .ok_or_else(|| make_array_error(self.array_order))?;
         self.buffers.push_array(self.array);
         Ok(ivalue)
     }
@@ -357,9 +362,8 @@ where
             "Arena<string> is full, cannot push more values to it",
         ))?;
         let value = IValue(
-            IValueImpl::try_array(self.interners, &mut self.array, self.array_order).ok_or(
-                Error::custom("Arena<array> is full, cannot push more values to it"),
-            )?,
+            IValueImpl::try_array(self.interners, &mut self.array, self.array_order)
+                .ok_or_else(|| make_array_error(self.array_order))?,
         );
         self.buffers.push_array(self.array);
 
@@ -962,9 +966,7 @@ where
 
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
         let ivalue = IValueImpl::try_array_mut(self.interners, &mut self.array, self.array_order)
-            .ok_or(Error::custom(
-            "Arena<array> is full, cannot push more values to it",
-        ))?;
+            .ok_or_else(|| make_array_error(self.array_order))?;
         self.buffers.push_array(self.array);
         Ok(ivalue)
     }
@@ -1040,9 +1042,8 @@ where
             Error::custom("Arena<string> is full, cannot push more values to it"),
         )?;
         let value = IValue(
-            IValueImpl::try_array_mut(self.interners, &mut self.array, self.array_order).ok_or(
-                Error::custom("Arena<array> is full, cannot push more values to it"),
-            )?,
+            IValueImpl::try_array_mut(self.interners, &mut self.array, self.array_order)
+                .ok_or_else(|| make_array_error(self.array_order))?,
         );
         self.buffers.push_array(self.array);
 
@@ -1420,6 +1421,15 @@ impl<'a, H> Serialize for BoundValue<'a, H> {
                 serializer.collect_seq(
                     array
                         .iter()
+                        .map(|value| BoundValue::new(value, self.interners)),
+                )
+            }
+            IValueImpl::Set(a) => {
+                let set = self.interners.iset.try_lookup(*a).ok_or(SerError::custom(
+                    "Interned<set> is out of bounds for this arena",
+                ))?;
+                serializer.collect_seq(
+                    set.iter()
                         .map(|value| BoundValue::new(value, self.interners)),
                 )
             }

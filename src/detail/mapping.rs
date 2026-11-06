@@ -9,6 +9,7 @@ pub struct Mapping {
     pub(crate) float64: ForwardMapping<U32>,
     pub(crate) string: ForwardMapping<U32>,
     pub(crate) iarray: ForwardMapping<U32>,
+    pub(crate) iset: ForwardMapping<U32>,
     pub(crate) iobject: ForwardMapping<U32>,
 }
 
@@ -22,6 +23,7 @@ impl Mapping {
             float64: self.float64,
             string: self.string,
             iarray: self.iarray.compose(other.iarray),
+            iset: self.iset.compose(other.iset),
             iobject: self.iobject.compose(other.iobject),
         }
     }
@@ -33,6 +35,7 @@ impl Mapping {
             && self.float64.is_identity()
             && self.string.is_identity()
             && self.iarray.is_identity()
+            && self.iset.is_identity()
             && self.iobject.is_identity()
     }
 
@@ -66,6 +69,12 @@ impl Mapping {
         self.iarray.count_remapped()
     }
 
+    /// Returns the number of sets that are remapped by this mapping.
+    #[cfg(feature = "debug")]
+    pub fn count_remapped_sets(&self) -> usize {
+        self.iset.count_remapped()
+    }
+
     /// Returns the number of objects that are remapped by this mapping.
     #[cfg(feature = "debug")]
     pub fn count_remapped_objects(&self) -> usize {
@@ -89,6 +98,7 @@ impl Mapping {
             IValueImpl::F64(x) => IValueImpl::F64(self.float64.map(x)),
             IValueImpl::String(x) => IValueImpl::String(self.string.map_str(x)),
             IValueImpl::Array(x) => IValueImpl::Array(self.iarray.map_slice(x)),
+            IValueImpl::Set(x) => IValueImpl::Set(self.iset.map_slice(x)),
             IValueImpl::Object(x) => IValueImpl::Object(self.iobject.map_slice(x)),
         })
     }
@@ -104,13 +114,14 @@ pub(crate) struct MappingScalars {
 }
 
 impl MappingScalars {
-    pub fn promote(self, num_arrays: usize, num_objects: usize) -> Mapping {
+    pub fn promote(self, num_arrays: usize, num_sets: usize, num_objects: usize) -> Mapping {
         Mapping {
             uint64: self.uint64,
             int64: self.int64,
             float64: self.float64,
             string: self.string,
             iarray: ForwardMapping::identity(U32::from_usize(num_arrays)),
+            iset: ForwardMapping::identity(U32::from_usize(num_sets)),
             iobject: ForwardMapping::identity(U32::from_usize(num_objects)),
         }
     }
@@ -140,6 +151,7 @@ impl MappingScalars {
             IValueImpl::F64(x) => IValueImpl::F64(self.float64.map(x)),
             IValueImpl::String(x) => IValueImpl::String(self.string.map_str(x)),
             IValueImpl::Array(x) => IValueImpl::Array(x),
+            IValueImpl::Set(x) => IValueImpl::Set(x),
             IValueImpl::Object(x) => IValueImpl::Object(x),
         })
     }
@@ -149,6 +161,7 @@ impl MappingScalars {
 /// instance to another.
 pub(crate) struct MappingNoScalars {
     pub(crate) iarray: ForwardMapping<U32>,
+    pub(crate) iset: ForwardMapping<U32>,
     pub(crate) iobject: ForwardMapping<U32>,
 }
 
@@ -166,13 +179,14 @@ impl MappingNoScalars {
             float64: ForwardMapping::identity(U32::from_usize(num_float64s)),
             string: ForwardMapping::identity(U32::from_usize(num_strings)),
             iarray: self.iarray,
+            iset: self.iset,
             iobject: self.iobject,
         }
     }
 
     /// Checks wether this mapping is the identity.
     pub fn is_identity(&self) -> bool {
-        self.iarray.is_identity() && self.iobject.is_identity()
+        self.iarray.is_identity() && self.iset.is_identity() && self.iobject.is_identity()
     }
 
     /// Maps the given value from the source [`Jinterners`](crate::Jinterners)
@@ -188,6 +202,7 @@ impl MappingNoScalars {
             IValueImpl::F64(x) => IValueImpl::F64(x),
             IValueImpl::String(x) => IValueImpl::String(x),
             IValueImpl::Array(x) => IValueImpl::Array(self.iarray.map_slice(x)),
+            IValueImpl::Set(x) => IValueImpl::Set(self.iset.map_slice(x)),
             IValueImpl::Object(x) => IValueImpl::Object(self.iobject.map_slice(x)),
         })
     }

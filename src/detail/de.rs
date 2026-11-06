@@ -67,6 +67,31 @@ where
     }
 }
 
+fn deserialize_set<'de, V, H>(
+    visitor: V,
+    set: InternedSlice<IValue<H>, H, U32>,
+    interners: &'de Jinterners<H>,
+) -> Result<V::Value, JsonError>
+where
+    V: Visitor<'de>,
+{
+    let set = interners.iset.try_lookup(set).ok_or(Error::custom(
+        "Interned<set> is out of bounds for this arena",
+    ))?;
+    let len = set.len();
+    let mut array_access = ArrayAccess {
+        array: set,
+        index: 0,
+        interners,
+    };
+    let value = visitor.visit_seq(&mut array_access)?;
+    if array_access.is_fully_scanned() {
+        Ok(value)
+    } else {
+        Err(Error::invalid_length(len, &"fewer elements in set"))
+    }
+}
+
 fn deserialize_object<'de, V, H>(
     visitor: V,
     object: InternedSlice<(InternedStrKey<H>, IValue<H>), H, U32>,
@@ -129,6 +154,7 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
                 Unexpected::Str(self.interners.string.try_lookup(*s).unwrap_or_default())
             }
             IValueImpl::Array(_) => Unexpected::Seq,
+            IValueImpl::Set(_) => Unexpected::Seq,
             IValueImpl::Object(_) => Unexpected::Map,
         }
     }
@@ -212,6 +238,7 @@ impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
                 )?)
             }
             IValueImpl::Array(a) => deserialize_array(visitor, *a, self.interners),
+            IValueImpl::Set(a) => deserialize_set(visitor, *a, self.interners),
             IValueImpl::Object(o) => deserialize_object(visitor, *o, self.interners),
         }
     }
@@ -386,6 +413,7 @@ impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
     {
         match self.value {
             IValueImpl::Array(a) => deserialize_array(visitor, *a, self.interners),
+            IValueImpl::Set(a) => deserialize_set(visitor, *a, self.interners),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
@@ -972,6 +1000,13 @@ impl<'de, H> Deserializer<'de> for StringDeserializer<'de, H> {
     }
 }
 
+fn make_array_error<E: Error>(array_order: ArrayOrder) -> E {
+    Error::custom(match array_order {
+        ArrayOrder::Preserve => "Arena<array> is full, cannot push more values to it",
+        ArrayOrder::Unordered => "Arena<set> is full, cannot push more values to it",
+    })
+}
+
 /// Helper struct to deserialize an [`IValue`] from a [`Deserializer`],
 /// interning intermediate values into the attached [`Jinterners`] arena.
 ///
@@ -1256,9 +1291,8 @@ where
             a.push(IValue(ivalue));
         }
 
-        let ivalue = IValueImpl::try_array_mut(self.interners, &mut a, self.array_order).ok_or(
-            Error::custom("Arena<array> is full, cannot push more values to it"),
-        )?;
+        let ivalue = IValueImpl::try_array_mut(self.interners, &mut a, self.array_order)
+            .ok_or_else(|| make_array_error(self.array_order))?;
         self.buffers.push_array(a);
         Ok(ivalue)
     }
@@ -1679,9 +1713,8 @@ pub mod sync {
                 a.push(IValue(ivalue));
             }
 
-            let ivalue = IValueImpl::try_array(self.interners, &mut a, self.array_order).ok_or(
-                Error::custom("Arena<array> is full, cannot push more values to it"),
-            )?;
+            let ivalue = IValueImpl::try_array(self.interners, &mut a, self.array_order)
+                .ok_or_else(|| make_array_error(self.array_order))?;
             self.buffers.push_array(a);
             Ok(ivalue)
         }

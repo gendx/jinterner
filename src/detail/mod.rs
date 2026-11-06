@@ -76,6 +76,15 @@ impl<'a, H> BoundValue<'a, H> {
     }
 }
 
+impl<H> Debug for BoundValue<'_, H> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BoundValue")
+            .field("value", self.value)
+            .field("interners", &(self.interners as *const _))
+            .finish()
+    }
+}
+
 impl<'a, 'b, H, I> PartialEq<BoundValue<'b, I>> for BoundValue<'a, H> {
     fn eq(&self, other: &BoundValue<'b, I>) -> bool {
         match (self.value.0, other.value.0) {
@@ -109,6 +118,7 @@ impl<'a, 'b, H, I> PartialEq<BoundValue<'b, I>> for BoundValue<'a, H> {
                             interners: other.interners,
                         }))
             }
+            (IValueImpl::Set(_), IValueImpl::Set(_)) => todo!("Compare sets"),
             (IValueImpl::Object(a), IValueImpl::Object(b)) => {
                 let a = self.interners.iobject.lookup(a);
                 let b = other.interners.iobject.lookup(b);
@@ -211,6 +221,7 @@ impl<H> PartialEq<Value> for BoundValue<'_, H> {
                         |v, w| v == *w,
                     )
             }
+            (IValueImpl::Set(_), Value::Array(_)) => todo!("Compare sets"),
             (IValueImpl::Object(a), Value::Object(b)) => {
                 let a = self.interners.iobject.lookup(a);
                 if a.len() != b.len() {
@@ -689,9 +700,12 @@ where
 
     /// Interns a JSON array, whose items are already interned.
     ///
-    /// See also [`array_mut()`](Self::array_mut), which is more efficient if
-    /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
-    /// acquiring locks.
+    /// See also:
+    /// - [`array_mut()`](Self::array_mut), which is more efficient if you hold
+    ///   a mutable reference to the [`Jinterners`] arena as it avoids acquiring
+    ///   locks,
+    /// - [`seq()`](Self::seq) and [`unordered_set()`](Self::unordered_set) if
+    ///   you know the [`ArrayOrder`] policy at compile time.
     ///
     /// # Panics
     ///
@@ -706,9 +720,13 @@ where
     ///
     /// This returns [`None`] if the arena is full.
     ///
-    /// See also [`try_array_mut()`](Self::try_array_mut), which is more
-    /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
-    /// it avoids acquiring locks.
+    /// See also:
+    /// - [`try_array_mut()`](Self::try_array_mut), which is more efficient if
+    ///   you hold a mutable reference to the [`Jinterners`] arena as it avoids
+    ///   acquiring locks,
+    /// - [`try_seq()`](Self::try_seq) and
+    ///   [`try_unordered_set()`](Self::try_unordered_set) if you know the
+    ///   [`ArrayOrder`] policy at compile time.
     #[cfg(feature = "sync")]
     pub fn try_array(interners: &Jinterners<H>, a: &mut [Self], order: ArrayOrder) -> Option<Self> {
         IValueImpl::try_array(interners, a, order).map(Self)
@@ -719,6 +737,10 @@ where
     /// Contrary to [`array()`](Self::array), no locks are held internally
     /// because this function already takes an exclusive mutable reference to
     /// the [`Jinterners`] arena.
+    ///
+    /// See also [`seq_mut()`](Self::seq_mut) and
+    /// [`unordered_set_mut()`](Self::unordered_set_mut) if you know the
+    /// [`ArrayOrder`] policy at compile time.
     ///
     /// # Panics
     ///
@@ -735,12 +757,145 @@ where
     /// Contrary to [`try_array()`](Self::try_array), no locks are held
     /// internally because this function already takes an exclusive mutable
     /// reference to the [`Jinterners`] arena.
+    ///
+    /// See also [`try_seq_mut()`](Self::try_seq_mut) and
+    /// [`try_unordered_set_mut()`](Self::try_unordered_set_mut) if you know the
+    /// [`ArrayOrder`] policy at compile time.
     pub fn try_array_mut(
         interners: &mut Jinterners<H>,
         a: &mut [Self],
         order: ArrayOrder,
     ) -> Option<Self> {
         IValueImpl::try_array_mut(interners, a, order).map(Self)
+    }
+
+    /// Interns a JSON array, preserving its sequential order.
+    ///
+    /// See also:
+    /// - [`seq_mut()`](Self::seq_mut), which is more efficient if you hold a
+    ///   mutable reference to the [`Jinterners`] arena as it avoids acquiring
+    ///   locks,
+    /// - [`array()`](Self::array) if you don't know the [`ArrayOrder`] policy
+    ///   at compile time.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_seq()`](Self::try_seq) for a fallible API.
+    #[cfg(feature = "sync")]
+    pub fn seq(interners: &Jinterners<H>, a: &[Self]) -> Self {
+        Self(IValueImpl::seq(interners, a))
+    }
+
+    /// Interns a JSON array, preserving its sequential order.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also:
+    /// - [`try_seq_mut()`](Self::try_seq_mut), which is more efficient if you
+    ///   hold a mutable reference to the [`Jinterners`] arena as it avoids
+    ///   acquiring locks,
+    /// - [`try_array()`](Self::try_array) if you don't know the [`ArrayOrder`]
+    ///   policy at compile time.
+    #[cfg(feature = "sync")]
+    pub fn try_seq(interners: &Jinterners<H>, a: &[Self]) -> Option<Self> {
+        IValueImpl::try_seq(interners, a).map(Self)
+    }
+
+    /// Interns a JSON array, preserving its sequential order.
+    ///
+    /// Contrary to [`seq()`](Self::seq), no locks are held internally
+    /// because this function already takes an exclusive mutable reference to
+    /// the [`Jinterners`] arena.
+    ///
+    /// See also [`array_mut()`](Self::array_mut) if you don't know the
+    /// [`ArrayOrder`] policy at compile time.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_seq_mut()`](Self::try_seq_mut) for a fallible API.
+    pub fn seq_mut(interners: &mut Jinterners<H>, a: &[Self]) -> Self {
+        Self(IValueImpl::seq_mut(interners, a))
+    }
+
+    /// Interns a JSON array, preserving its sequential order.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_seq()`](Self::try_seq), no locks are held internally
+    /// because this function already takes an exclusive mutable reference to
+    /// the [`Jinterners`] arena.
+    ///
+    /// See also [`try_array_mut()`](Self::try_array_mut) if you don't know the
+    /// [`ArrayOrder`] policy at compile time.
+    pub fn try_seq_mut(interners: &mut Jinterners<H>, a: &[Self]) -> Option<Self> {
+        IValueImpl::try_seq_mut(interners, a).map(Self)
+    }
+
+    /// Interns a JSON array as an unordered set.
+    ///
+    /// See also:
+    /// - [`unordered_set_mut()`](Self::unordered_set_mut), which is more
+    ///   efficient if you hold a mutable reference to the [`Jinterners`] arena
+    ///   as it avoids acquiring locks,
+    /// - [`array()`](Self::array) if you don't know the [`ArrayOrder`] policy
+    ///   at compile time.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_unordered_set()`](Self::try_unordered_set) for a fallible API.
+    #[cfg(feature = "sync")]
+    pub fn unordered_set(interners: &Jinterners<H>, a: &mut [Self]) -> Self {
+        Self(IValueImpl::unordered_set(interners, a))
+    }
+
+    /// Interns a JSON array as an unordered set.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also:
+    /// - [`try_unordered_set_mut()`](Self::try_unordered_set_mut), which is
+    ///   more efficient if you hold a mutable reference to the [`Jinterners`]
+    ///   arena as it avoids acquiring locks,
+    /// - [`try_array()`](Self::try_array) if you don't know the [`ArrayOrder`]
+    ///   policy at compile time.
+    #[cfg(feature = "sync")]
+    pub fn try_unordered_set(interners: &Jinterners<H>, a: &mut [Self]) -> Option<Self> {
+        IValueImpl::try_unordered_set(interners, a).map(Self)
+    }
+
+    /// Interns a JSON array in arbitrary order.
+    ///
+    /// Contrary to [`unordered_set()`](Self::unordered_set), no locks are held
+    /// internally because this function already takes an exclusive mutable
+    /// reference to the [`Jinterners`] arena.
+    ///
+    /// See also [`array_mut()`](Self::array_mut) if you don't know the
+    /// [`ArrayOrder`] policy at compile time.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_unordered_set_mut()`](Self::try_unordered_set_mut) for a fallible
+    /// API.
+    pub fn unordered_set_mut(interners: &mut Jinterners<H>, a: &mut [Self]) -> Self {
+        Self(IValueImpl::unordered_set_mut(interners, a))
+    }
+
+    /// Interns a JSON array as an unordered set.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_unordered_set()`](Self::try_unordered_set), no locks
+    /// are held internally because this function already takes an exclusive
+    /// mutable reference to the [`Jinterners`] arena.
+    ///
+    /// See also [`try_array_mut()`](Self::try_array_mut) if you don't know the
+    /// [`ArrayOrder`] policy at compile time.
+    pub fn try_unordered_set_mut(interners: &mut Jinterners<H>, a: &mut [Self]) -> Option<Self> {
+        IValueImpl::try_unordered_set_mut(interners, a).map(Self)
     }
 
     /// Interns a JSON object, whose values are already interned.
@@ -1211,6 +1366,14 @@ impl<H> IValue<H> {
                     false
                 }
             }
+            IValueImpl::Set(a) => {
+                if builder.sets.insert(a) {
+                    builder.queue_sets.push(a);
+                    true
+                } else {
+                    false
+                }
+            }
             IValueImpl::Object(o) => {
                 if builder.objects.insert(o) {
                     builder.queue_objects.push(o);
@@ -1256,6 +1419,7 @@ enum IValueImpl<H> {
     F64(Interned<Float64, Float64, H, U32>),
     String(InternedStr<H, U32>),
     Array(InternedSlice<IValue<H>, H, U32>),
+    Set(InternedSlice<IValue<H>, H, U32>),
     Object(InternedSlice<(InternedStrKey<H>, IValue<H>), H, U32>),
 }
 
@@ -1277,6 +1441,7 @@ impl<H> Debug for IValueImpl<H> {
             IValueImpl::F64(x) => f.debug_tuple("IValue::F64").field(x).finish(),
             IValueImpl::String(s) => f.debug_tuple("IValue::String").field(s).finish(),
             IValueImpl::Array(a) => f.debug_tuple("IValue::Array").field(a).finish(),
+            IValueImpl::Set(a) => f.debug_tuple("IValue::Set").field(a).finish(),
             IValueImpl::Object(o) => f.debug_tuple("IValue::Object").field(o).finish(),
         }
     }
@@ -1302,6 +1467,7 @@ impl<H> PartialEq for IValueImpl<H> {
             (IValueImpl::F64(a), IValueImpl::F64(b)) => a == b,
             (IValueImpl::String(a), IValueImpl::String(b)) => a == b,
             (IValueImpl::Array(a), IValueImpl::Array(b)) => a == b,
+            (IValueImpl::Set(a), IValueImpl::Set(b)) => a == b,
             (IValueImpl::Object(a), IValueImpl::Object(b)) => a == b,
             _ => false,
         }
@@ -1335,6 +1501,7 @@ impl<H> Ord for IValueImpl<H> {
                 (IValueImpl::F64(a), IValueImpl::F64(b)) => a.cmp(b),
                 (IValueImpl::String(a), IValueImpl::String(b)) => a.cmp(b),
                 (IValueImpl::Array(a), IValueImpl::Array(b)) => a.cmp(b),
+                (IValueImpl::Set(a), IValueImpl::Set(b)) => a.cmp(b),
                 (IValueImpl::Object(a), IValueImpl::Object(b)) => a.cmp(b),
                 _ => unreachable!(),
             },
@@ -1358,6 +1525,7 @@ impl<H> Hash for IValueImpl<H> {
             IValueImpl::F64(x) => x.hash(state),
             IValueImpl::String(s) => s.hash(state),
             IValueImpl::Array(a) => a.hash(state),
+            IValueImpl::Set(a) => a.hash(state),
             IValueImpl::Object(o) => o.hash(state),
         }
     }
@@ -1399,8 +1567,9 @@ impl<H> Serialize for IValueImpl<H> {
             IValueImpl::Array(x) => {
                 serializer.serialize_newtype_variant("IValueImpl", 8, "Array", x)
             }
+            IValueImpl::Set(x) => serializer.serialize_newtype_variant("IValueImpl", 9, "Set", x),
             IValueImpl::Object(x) => {
-                serializer.serialize_newtype_variant("IValueImpl", 9, "Object", x)
+                serializer.serialize_newtype_variant("IValueImpl", 10, "Object", x)
             }
         }
     }
@@ -1448,6 +1617,10 @@ impl<H> Schema for IValueImpl<H> {
                 ty: &DataModelVariant::NewtypeVariant(InternedSlice::<IValue<H>, H, U32>::SCHEMA),
             },
             &NamedVariant {
+                name: "Set",
+                ty: &DataModelVariant::NewtypeVariant(InternedSlice::<IValue<H>, H, U32>::SCHEMA),
+            },
+            &NamedVariant {
                 name: "Object",
                 ty: &DataModelVariant::NewtypeVariant(
                     InternedSlice::<(InternedStrKey<H>, IValue<H>), H, U32>::SCHEMA,
@@ -1466,7 +1639,8 @@ impl<'de, H> Deserialize<'de> for IValueImpl<H> {
         deserializer.deserialize_enum(
             "IValueImpl",
             &[
-                "Null", "Bool", "U32", "I32", "U64", "I64", "F64", "String", "Array", "Object",
+                "Null", "Bool", "U32", "I32", "U64", "I64", "F64", "String", "Array", "Set",
+                "Object",
             ],
             IValueImplVisitor(PhantomData),
         )
@@ -1499,6 +1673,7 @@ impl<'de, H> Visitor<'de> for IValueImplVisitor<H> {
             F64,
             String,
             Array,
+            Set,
             Object,
         }
 
@@ -1522,6 +1697,7 @@ impl<'de, H> Visitor<'de> for IValueImplVisitor<H> {
             IValueImplVariant::F64 => IValueImpl::F64(data.newtype_variant()?),
             IValueImplVariant::String => IValueImpl::String(data.newtype_variant()?),
             IValueImplVariant::Array => IValueImpl::Array(data.newtype_variant()?),
+            IValueImplVariant::Set => IValueImpl::Set(data.newtype_variant()?),
             IValueImplVariant::Object => IValueImpl::Object(data.newtype_variant()?),
         })
     }
@@ -1540,7 +1716,8 @@ impl<H> IValueImpl<H> {
             IValueImpl::F64(_) => 6,
             IValueImpl::String(_) => 7,
             IValueImpl::Array(_) => 8,
-            IValueImpl::Object(_) => 9,
+            IValueImpl::Set(_) => 9,
+            IValueImpl::Object(_) => 10,
         }
     }
 }
@@ -1662,12 +1839,9 @@ where
     #[cfg(feature = "sync")]
     fn array(interners: &Jinterners<H>, a: &mut [IValue<H>], order: ArrayOrder) -> Self {
         match order {
-            ArrayOrder::Preserve => (),
-            ArrayOrder::Unordered => {
-                a.sort_unstable();
-            }
+            ArrayOrder::Preserve => IValueImpl::seq(interners, a),
+            ArrayOrder::Unordered => IValueImpl::unordered_set(interners, a),
         }
-        IValueImpl::Array(interners.iarray.intern_copy(a))
     }
 
     #[cfg(feature = "sync")]
@@ -1677,22 +1851,16 @@ where
         order: ArrayOrder,
     ) -> Option<Self> {
         match order {
-            ArrayOrder::Preserve => (),
-            ArrayOrder::Unordered => {
-                a.sort_unstable();
-            }
+            ArrayOrder::Preserve => IValueImpl::try_seq(interners, a),
+            ArrayOrder::Unordered => IValueImpl::try_unordered_set(interners, a),
         }
-        interners.iarray.try_intern_copy(a).map(IValueImpl::Array)
     }
 
     fn array_mut(interners: &mut Jinterners<H>, a: &mut [IValue<H>], order: ArrayOrder) -> Self {
         match order {
-            ArrayOrder::Preserve => (),
-            ArrayOrder::Unordered => {
-                a.sort_unstable();
-            }
+            ArrayOrder::Preserve => IValueImpl::seq_mut(interners, a),
+            ArrayOrder::Unordered => IValueImpl::unordered_set_mut(interners, a),
         }
-        IValueImpl::Array(interners.iarray.intern_copy_mut(a))
     }
 
     fn try_array_mut(
@@ -1701,15 +1869,52 @@ where
         order: ArrayOrder,
     ) -> Option<Self> {
         match order {
-            ArrayOrder::Preserve => (),
-            ArrayOrder::Unordered => {
-                a.sort_unstable();
-            }
+            ArrayOrder::Preserve => IValueImpl::try_seq_mut(interners, a),
+            ArrayOrder::Unordered => IValueImpl::try_unordered_set_mut(interners, a),
         }
+    }
+
+    #[cfg(feature = "sync")]
+    fn seq(interners: &Jinterners<H>, a: &[IValue<H>]) -> Self {
+        IValueImpl::Array(interners.iarray.intern_copy(a))
+    }
+
+    #[cfg(feature = "sync")]
+    fn try_seq(interners: &Jinterners<H>, a: &[IValue<H>]) -> Option<Self> {
+        interners.iarray.try_intern_copy(a).map(IValueImpl::Array)
+    }
+
+    fn seq_mut(interners: &mut Jinterners<H>, a: &[IValue<H>]) -> Self {
+        IValueImpl::Array(interners.iarray.intern_copy_mut(a))
+    }
+
+    fn try_seq_mut(interners: &mut Jinterners<H>, a: &[IValue<H>]) -> Option<Self> {
         interners
             .iarray
             .try_intern_copy_mut(a)
             .map(IValueImpl::Array)
+    }
+
+    #[cfg(feature = "sync")]
+    fn unordered_set(interners: &Jinterners<H>, a: &mut [IValue<H>]) -> Self {
+        a.sort_unstable();
+        IValueImpl::Set(interners.iset.intern_copy(a))
+    }
+
+    #[cfg(feature = "sync")]
+    fn try_unordered_set(interners: &Jinterners<H>, a: &mut [IValue<H>]) -> Option<Self> {
+        a.sort_unstable();
+        interners.iset.try_intern_copy(a).map(IValueImpl::Set)
+    }
+
+    fn unordered_set_mut(interners: &mut Jinterners<H>, a: &mut [IValue<H>]) -> Self {
+        a.sort_unstable();
+        IValueImpl::Set(interners.iset.intern_copy_mut(a))
+    }
+
+    fn try_unordered_set_mut(interners: &mut Jinterners<H>, a: &mut [IValue<H>]) -> Option<Self> {
+        a.sort_unstable();
+        interners.iset.try_intern_copy_mut(a).map(IValueImpl::Set)
     }
 
     #[cfg(feature = "sync")]
@@ -1962,6 +2167,14 @@ where
                     .map(|v| interners.try_lookup(v))
                     .collect::<Option<_>>()?,
             ),
+            IValueImpl::Set(a) => Value::Array(
+                interners
+                    .iset
+                    .try_lookup(*a)?
+                    .iter()
+                    .map(|v| interners.try_lookup(v))
+                    .collect::<Option<_>>()?,
+            ),
             IValueImpl::Object(o) => Value::Object(
                 interners
                     .iobject
@@ -1996,6 +2209,7 @@ where
             IValueImpl::F64(x) => ValueRef::F64(interners.float64.try_lookup(*x)?.0.0),
             IValueImpl::String(s) => ValueRef::String(interners.string.try_lookup(*s)?),
             IValueImpl::Array(a) => ValueRef::Array(interners.iarray.try_lookup(*a)?),
+            IValueImpl::Set(a) => ValueRef::Set(interners.iset.try_lookup(*a)?),
             IValueImpl::Object(o) => ValueRef::Object(MapRef {
                 arena_str: &interners.string,
                 map: interners.iobject.try_lookup(*o)?,
@@ -2018,8 +2232,10 @@ pub enum ValueRef<'a, H = DefaultBuildHasher> {
     F64(f64),
     /// JSON string.
     String(&'a str),
-    /// JSON array.
+    /// JSON array, with its sequential order preserved.
     Array(&'a [IValue<H>]),
+    /// JSON array, with items in arbitrary order.
+    Set(&'a [IValue<H>]),
     /// JSON object.
     Object(MapRef<'a, H>),
 }
@@ -2114,7 +2330,7 @@ mod delta {
         where
             S: Serializer,
         {
-            let mut tuple = serializer.serialize_tuple(6)?;
+            let mut tuple = serializer.serialize_tuple(7)?;
 
             tuple.serialize_element(&self.inner.uint64)?;
             tuple.serialize_element(&self.inner.int64)?;
@@ -2124,6 +2340,10 @@ mod delta {
             let iarray: RawDeltaEncoding<_, IArrayAccumulator<H>> =
                 RawDeltaEncoding::new(&self.inner.iarray);
             tuple.serialize_element(&iarray)?;
+
+            let iset: RawDeltaEncoding<_, IArrayAccumulator<H>> =
+                RawDeltaEncoding::new(&self.inner.iset);
+            tuple.serialize_element(&iset)?;
 
             let iobject: RawDeltaEncoding<_, IObjectAccumulator<H>> =
                 RawDeltaEncoding::new(&self.inner.iobject);
@@ -2143,6 +2363,7 @@ mod delta {
                 Arena::<Float64, Float64, H, U32>::SCHEMA,
                 ArenaStr::<H, U32>::SCHEMA,
                 RawDeltaEncoding::<&ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>>::SCHEMA,
+                RawDeltaEncoding::<&ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>>::SCHEMA,
                 RawDeltaEncoding::<
                     &ArenaSlice<(InternedStrKey<H>, IValue<H>), H, U32>,
                     IObjectAccumulator<H>,
@@ -2159,7 +2380,7 @@ mod delta {
         where
             D: Deserializer<'de>,
         {
-            deserializer.deserialize_tuple(6, DeltaJinternersVisitor(PhantomData))
+            deserializer.deserialize_tuple(7, DeltaJinternersVisitor(PhantomData))
         }
     }
 
@@ -2172,7 +2393,7 @@ mod delta {
         type Value = DeltaEncoding<Jinterners<H>>;
 
         fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-            formatter.write_str("a tuple with 6 elements")
+            formatter.write_str("a tuple with 7 elements")
         }
 
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -2196,13 +2417,17 @@ mod delta {
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(4, &self))?;
 
+            let iset: RawDeltaEncoding<ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>> = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::invalid_length(5, &self))?;
+
             #[expect(clippy::type_complexity)]
             let iobject: RawDeltaEncoding<
                 ArenaSlice<(InternedStrKey<H>, IValue<H>), H, U32>,
                 IObjectAccumulator<H>,
             > = seq
                 .next_element()?
-                .ok_or_else(|| A::Error::invalid_length(5, &self))?;
+                .ok_or_else(|| A::Error::invalid_length(6, &self))?;
 
             Ok(DeltaEncoding::new(Jinterners {
                 uint64,
@@ -2210,6 +2435,7 @@ mod delta {
                 float64,
                 string,
                 iarray: iarray.into_inner(),
+                iset: iset.into_inner(),
                 iobject: iobject.into_inner(),
             }))
         }
@@ -2229,6 +2455,7 @@ mod delta {
         F64(i32),
         String(i32),
         Array(i32),
+        Set(i32),
         Object(i32),
     }
 
@@ -2241,6 +2468,7 @@ mod delta {
         f: u32,
         s: u32,
         a: u32,
+        set: u32,
         o: u32,
         _phantom: PhantomData<fn() -> IValueImpl<H>>,
     }
@@ -2256,6 +2484,7 @@ mod delta {
                 f: 0,
                 s: 0,
                 a: 0,
+                set: 0,
                 o: 0,
                 _phantom: PhantomData,
             }
@@ -2318,6 +2547,12 @@ mod delta {
                     self.a = id;
                     IValueDelta::Array(diff as i32)
                 }
+                IValueImpl::Set(x) => {
+                    let id = x.id().to_usize() as u32;
+                    let diff = id.wrapping_sub(self.set);
+                    self.set = id;
+                    IValueDelta::Set(diff as i32)
+                }
                 IValueImpl::Object(x) => {
                     let id = x.id().to_usize() as u32;
                     let diff = id.wrapping_sub(self.o);
@@ -2369,6 +2604,11 @@ mod delta {
                     let x = self.a.wrapping_add(*x as u32);
                     self.a = x;
                     IValueImpl::Array(InternedSlice::from_id(U32::from_usize(x as usize)))
+                }
+                IValueDelta::Set(x) => {
+                    let x = self.set.wrapping_add(*x as u32);
+                    self.set = x;
+                    IValueImpl::Set(InternedSlice::from_id(U32::from_usize(x as usize)))
                 }
                 IValueDelta::Object(x) => {
                     let x = self.o.wrapping_add(*x as u32);
