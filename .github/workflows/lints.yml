@@ -8,6 +8,8 @@ jobs:
       RUSTDOCFLAGS: "-Z unstable-options --no-run --no-capture --test-builder clippy-driver"
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy
