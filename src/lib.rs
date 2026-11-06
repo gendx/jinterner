@@ -276,6 +276,7 @@ impl<H> Jinterners<H> {
 /// Statistics about a [`Jinterners`] arena.
 ///
 /// This struct is returned by the [`stats()`](Jinterners::stats) method.
+#[derive(Debug)]
 pub struct Stats {
     /// Number of [`u64`]s in the arena.
     pub u64s: usize,

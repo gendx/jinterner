@@ -58,6 +58,15 @@ jobs:
       - name: Check Clippy lints on benchmarks (all features)
         run: cargo clippy --verbose --all --benches --all-features
 
+      - name: Check Clippy lints on examples (default features)
+        run: cargo clippy --verbose --all --examples
+      - name: Check Clippy lints on examples (no default features)
+        run: cargo clippy --verbose --all --examples --no-default-features
+      - name: Check Clippy lints on examples (all features except sync)
+        run: cargo clippy --verbose --all --examples --no-default-features --features=debug,delta,get-size2,postcard-schema,retain,serde,std
+      - name: Check Clippy lints on examples (all features)
+        run: cargo clippy --verbose --all --examples --all-features
+
       - name: Check Clippy lints on doctests (default features)
         run: cargo test --verbose --doc
       - name: Check Clippy lints on doctests (no default features)
