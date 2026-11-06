@@ -13,6 +13,8 @@ use std::hint::black_box;
 use std::io::Read;
 
 const FILES: &[&str] = &[
+    "open_data/idfm_disruptions",
+    "open_data/lime_paris_free_bike_status",
     "simd_json/apache_builds",
     "simd_json/canada",
     "simd_json/citm_catalog",
