@@ -1,0 +1,29 @@
+on: [push, pull_request]
+name: Build benchmarks
+jobs:
+  build_benches:
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - beta
+          - nightly
+          - 1.91.0  # MSRV
+      fail-fast: false
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Build (default features)
+        run: cargo bench --no-run --verbose --all
+      - name: Build (no default features)
+        run: cargo bench --no-run --verbose --all --no-default-features
+      - name: Build (all features)
+        run: cargo bench --no-run --verbose --all --all-features
