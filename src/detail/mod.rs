@@ -103,7 +103,28 @@ where
     H: BuildHasher,
 {
     fn eq(&self, other: &BoundValue<'b, I>) -> bool {
-        Comparator::eq(self, other)
+        match (self.value.0, other.value.0) {
+            (IValueImpl::Null, IValueImpl::Null) => true,
+            (IValueImpl::Bool(a), IValueImpl::Bool(b)) => a == b,
+            (IValueImpl::U32(a), IValueImpl::U32(b)) => a == b,
+            (IValueImpl::I32(a), IValueImpl::I32(b)) => a == b,
+            (IValueImpl::U64(a), IValueImpl::U64(b)) => {
+                self.interners.uint64.lookup(a) == other.interners.uint64.lookup(b)
+            }
+            (IValueImpl::I64(a), IValueImpl::I64(b)) => {
+                self.interners.int64.lookup(a) == other.interners.int64.lookup(b)
+            }
+            (IValueImpl::F64(a), IValueImpl::F64(b)) => {
+                self.interners.float64.lookup(a) == other.interners.float64.lookup(b)
+            }
+            (IValueImpl::String(a), IValueImpl::String(b)) => {
+                self.interners.string.lookup(a) == other.interners.string.lookup(b)
+            }
+            (IValueImpl::Array(_), IValueImpl::Array(_))
+            | (IValueImpl::Set(_), IValueImpl::Set(_))
+            | (IValueImpl::Object(_), IValueImpl::Object(_)) => Comparator::eq(self, other),
+            _ => false,
+        }
     }
 }
 
