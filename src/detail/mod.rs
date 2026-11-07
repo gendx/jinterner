@@ -359,6 +359,14 @@ where
     pub(crate) fn try_new_mut(interners: &mut Jinterners<H>, s: &str) -> Option<Self> {
         interners.string.try_intern_mut(s).map(Self)
     }
+
+    fn find(interners: &Jinterners<H>, s: &str) -> Option<Self> {
+        interners.string.find(s).map(Self)
+    }
+
+    fn find_mut(interners: &mut Jinterners<H>, s: &str) -> Option<Self> {
+        interners.string.find_mut(s).map(Self)
+    }
 }
 
 /// An interned JSON value.
@@ -1057,6 +1065,22 @@ where
         IValueImpl::try_from_mut(interners, source, array_order).map(Self)
     }
 
+    pub(crate) fn find(
+        interners: &Jinterners<H>,
+        source: &Value,
+        array_order: ArrayOrder,
+    ) -> Option<Self> {
+        IValueImpl::find(interners, source, array_order).map(Self)
+    }
+
+    pub(crate) fn find_mut(
+        interners: &mut Jinterners<H>,
+        source: &Value,
+        array_order: ArrayOrder,
+    ) -> Option<Self> {
+        IValueImpl::find_mut(interners, source, array_order).map(Self)
+    }
+
     pub(crate) fn lookup(&self, interners: &Jinterners<H>) -> Value {
         self.0.lookup(interners)
     }
@@ -1742,6 +1766,22 @@ where
         })
     }
 
+    fn find_u64(interners: &Jinterners<H>, x: u64) -> Option<Self> {
+        Some(if let Ok(x32) = u32::try_from(x) {
+            IValueImpl::U32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::U64(interners.uint64.find(&x)?)
+        })
+    }
+
+    fn find_u64_mut(interners: &mut Jinterners<H>, x: u64) -> Option<Self> {
+        Some(if let Ok(x32) = u32::try_from(x) {
+            IValueImpl::U32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::U64(interners.uint64.find_mut(&x)?)
+        })
+    }
+
     #[cfg(feature = "sync")]
     fn i64(interners: &Jinterners<H>, x: i64) -> Self {
         if let Ok(x32) = i32::try_from(x) {
@@ -1776,6 +1816,22 @@ where
         })
     }
 
+    fn find_i64(interners: &Jinterners<H>, x: i64) -> Option<Self> {
+        Some(if let Ok(x32) = i32::try_from(x) {
+            IValueImpl::I32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::I64(interners.int64.find(&x)?)
+        })
+    }
+
+    fn find_i64_mut(interners: &mut Jinterners<H>, x: i64) -> Option<Self> {
+        Some(if let Ok(x32) = i32::try_from(x) {
+            IValueImpl::I32(x32.to_ne_bytes())
+        } else {
+            IValueImpl::I64(interners.int64.find_mut(&x)?)
+        })
+    }
+
     #[cfg(feature = "sync")]
     fn f64(interners: &Jinterners<H>, x: f64) -> Self {
         IValueImpl::F64(interners.float64.intern(Float64(OrderedFloat(x))))
@@ -1797,6 +1853,20 @@ where
         interners
             .float64
             .try_intern_mut(Float64(OrderedFloat(x)))
+            .map(IValueImpl::F64)
+    }
+
+    fn find_f64(interners: &Jinterners<H>, x: f64) -> Option<Self> {
+        interners
+            .float64
+            .find(&Float64(OrderedFloat(x)))
+            .map(IValueImpl::F64)
+    }
+
+    fn find_f64_mut(interners: &mut Jinterners<H>, x: f64) -> Option<Self> {
+        interners
+            .float64
+            .find_mut(&Float64(OrderedFloat(x)))
             .map(IValueImpl::F64)
     }
 
@@ -1856,6 +1926,28 @@ where
         }
     }
 
+    fn find_array(
+        interners: &Jinterners<H>,
+        a: &mut [IValue<H>],
+        order: ArrayOrder,
+    ) -> Option<Self> {
+        match order {
+            ArrayOrder::Preserve => IValueImpl::find_seq(interners, a),
+            ArrayOrder::Unordered => IValueImpl::find_unordered_set(interners, a),
+        }
+    }
+
+    fn find_array_mut(
+        interners: &mut Jinterners<H>,
+        a: &mut [IValue<H>],
+        order: ArrayOrder,
+    ) -> Option<Self> {
+        match order {
+            ArrayOrder::Preserve => IValueImpl::find_seq_mut(interners, a),
+            ArrayOrder::Unordered => IValueImpl::find_unordered_set_mut(interners, a),
+        }
+    }
+
     #[cfg(feature = "sync")]
     fn seq(interners: &Jinterners<H>, a: &[IValue<H>]) -> Self {
         IValueImpl::Array(interners.iarray.intern_copy(a))
@@ -1875,6 +1967,14 @@ where
             .iarray
             .try_intern_copy_mut(a)
             .map(IValueImpl::Array)
+    }
+
+    fn find_seq(interners: &Jinterners<H>, a: &[IValue<H>]) -> Option<Self> {
+        interners.iarray.find(a).map(IValueImpl::Array)
+    }
+
+    fn find_seq_mut(interners: &mut Jinterners<H>, a: &[IValue<H>]) -> Option<Self> {
+        interners.iarray.find_mut(a).map(IValueImpl::Array)
     }
 
     #[cfg(feature = "sync")]
@@ -1897,6 +1997,16 @@ where
     fn try_unordered_set_mut(interners: &mut Jinterners<H>, a: &mut [IValue<H>]) -> Option<Self> {
         a.sort_unstable();
         interners.iset.try_intern_copy_mut(a).map(IValueImpl::Set)
+    }
+
+    fn find_unordered_set(interners: &Jinterners<H>, a: &mut [IValue<H>]) -> Option<Self> {
+        a.sort_unstable();
+        interners.iset.find(a).map(IValueImpl::Set)
+    }
+
+    fn find_unordered_set_mut(interners: &mut Jinterners<H>, a: &mut [IValue<H>]) -> Option<Self> {
+        a.sort_unstable();
+        interners.iset.find_mut(a).map(IValueImpl::Set)
     }
 
     #[cfg(feature = "sync")]
@@ -1928,6 +2038,22 @@ where
             .iobject
             .try_intern_copy_mut(o)
             .map(IValueImpl::Object)
+    }
+
+    fn find_object(
+        interners: &Jinterners<H>,
+        o: &mut [(InternedStrKey<H>, IValue<H>)],
+    ) -> Option<Self> {
+        o.sort_unstable_by_key(|(k, _)| *k);
+        interners.iobject.find(o).map(IValueImpl::Object)
+    }
+
+    fn find_object_mut(
+        interners: &mut Jinterners<H>,
+        o: &mut [(InternedStrKey<H>, IValue<H>)],
+    ) -> Option<Self> {
+        o.sort_unstable_by_key(|(k, _)| *k);
+        interners.iobject.find_mut(o).map(IValueImpl::Object)
     }
 
     /// Interns an object containing a single key-value pair.
@@ -2107,6 +2233,86 @@ where
                     })
                     .collect::<Option<Box<[_]>>>()?;
                 IValueImpl::try_object_mut(interners, &mut o)
+            }
+        }
+    }
+
+    fn find(interners: &Jinterners<H>, source: &Value, array_order: ArrayOrder) -> Option<Self> {
+        match source {
+            Value::Null => Some(IValueImpl::Null),
+            Value::Bool(x) => Some(IValueImpl::Bool(*x)),
+            Value::Number(x) => {
+                if x.is_u64() {
+                    IValueImpl::find_u64(interners, x.as_u64().unwrap())
+                } else if x.is_i64() {
+                    IValueImpl::find_i64(interners, x.as_i64().unwrap())
+                } else {
+                    IValueImpl::find_f64(interners, x.as_f64().unwrap())
+                }
+            }
+            Value::String(s) => interners.string.find(s.as_str()).map(IValueImpl::String),
+            Value::Array(a) => IValueImpl::find_array(
+                interners,
+                &mut a
+                    .iter()
+                    .map(|v| interners.find(v, array_order))
+                    .collect::<Option<Box<[_]>>>()?,
+                array_order,
+            ),
+            Value::Object(o) => IValueImpl::find_object(
+                interners,
+                &mut o
+                    .iter()
+                    .map(|(k, v)| {
+                        Some((
+                            InternedStrKey::find(interners, k.as_str())?,
+                            interners.find(v, array_order)?,
+                        ))
+                    })
+                    .collect::<Option<Box<[_]>>>()?,
+            ),
+        }
+    }
+
+    fn find_mut(
+        interners: &mut Jinterners<H>,
+        source: &Value,
+        array_order: ArrayOrder,
+    ) -> Option<Self> {
+        match source {
+            Value::Null => Some(IValueImpl::Null),
+            Value::Bool(x) => Some(IValueImpl::Bool(*x)),
+            Value::Number(x) => {
+                if x.is_u64() {
+                    IValueImpl::find_u64_mut(interners, x.as_u64().unwrap())
+                } else if x.is_i64() {
+                    IValueImpl::find_i64_mut(interners, x.as_i64().unwrap())
+                } else {
+                    IValueImpl::find_f64_mut(interners, x.as_f64().unwrap())
+                }
+            }
+            Value::String(s) => interners
+                .string
+                .find_mut(s.as_str())
+                .map(IValueImpl::String),
+            Value::Array(a) => {
+                let mut a = a
+                    .iter()
+                    .map(|v| interners.find_mut(v, array_order))
+                    .collect::<Option<Box<[_]>>>()?;
+                IValueImpl::find_array_mut(interners, &mut a, array_order)
+            }
+            Value::Object(o) => {
+                let mut o = o
+                    .iter()
+                    .map(|(k, v)| {
+                        Some((
+                            InternedStrKey::find_mut(interners, k.as_str())?,
+                            interners.find_mut(v, array_order)?,
+                        ))
+                    })
+                    .collect::<Option<Box<[_]>>>()?;
+                IValueImpl::find_object_mut(interners, &mut o)
             }
         }
     }

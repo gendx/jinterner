@@ -44,6 +44,31 @@ fn test_intern(#[files("data/**/*.json")] mut path: PathBuf) -> Result<()> {
 }
 
 #[rstest]
+fn test_intern_matches_serde_json(#[files("data/**/*.json")] mut path: PathBuf) -> Result<()> {
+    let name = extract_filename(&mut path)?;
+
+    let mut file = File::open(format!("data/{name}.json"))
+        .with_context(|| format!("Failed to read file data/{name}.json"))?;
+    let mut input = Vec::new();
+    file.read_to_end(&mut input)
+        .with_context(|| format!("Failed to read file data/{name}.json"))?;
+
+    let mut jinterners: Jinterners = Jinterners::default();
+    let ivalue = IValue::from_json_slice_mut(&input, &mut jinterners, ArrayOrder::Preserve)
+        .with_context(|| format!("Failed to deserialize file data/{name}.json with jinterner"))?;
+
+    let value = serde_json::from_slice(&input)
+        .with_context(|| format!("Failed to deserialize file data/{name}.json with serde_json"))?;
+
+    assert_eq!(
+        jinterners.find_mut(&value, ArrayOrder::Preserve),
+        Some(ivalue)
+    );
+
+    Ok(())
+}
+
+#[rstest]
 fn test_optimize(#[files("data/**/*.json")] mut path: PathBuf) -> Result<()> {
     let name = extract_filename(&mut path)?;
 
@@ -101,6 +126,33 @@ fn test_intern_unordered_arrays(#[files("data/**/*.json")] mut path: PathBuf) ->
     f.read_to_end(&mut expected)
         .with_context(|| format!("Failed to read file data/{name}.sets.postcard"))?;
     assert_eq!(serialized, expected);
+
+    Ok(())
+}
+
+#[rstest]
+fn test_intern_unordered_set_matches_serde_json(
+    #[files("data/**/*.json")] mut path: PathBuf,
+) -> Result<()> {
+    let name = extract_filename(&mut path)?;
+
+    let mut file = File::open(format!("data/{name}.json"))
+        .with_context(|| format!("Failed to read file data/{name}.json"))?;
+    let mut input = Vec::new();
+    file.read_to_end(&mut input)
+        .with_context(|| format!("Failed to read file data/{name}.json"))?;
+
+    let mut jinterners: Jinterners = Jinterners::default();
+    let ivalue = IValue::from_json_slice_mut(&input, &mut jinterners, ArrayOrder::Unordered)
+        .with_context(|| format!("Failed to deserialize file data/{name}.json with jinterner"))?;
+
+    let value = serde_json::from_slice(&input)
+        .with_context(|| format!("Failed to deserialize file data/{name}.json with serde_json"))?;
+
+    assert_eq!(
+        jinterners.find_mut(&value, ArrayOrder::Unordered),
+        Some(ivalue)
+    );
 
     Ok(())
 }

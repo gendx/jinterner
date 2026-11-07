@@ -426,6 +426,29 @@ where
         IValue::try_from_mut(self, source, array_order)
     }
 
+    /// Returns the given value's interned handle if it is already interned.
+    ///
+    /// Otherwise, this simply returns [`None`] without adding the value to this
+    /// arena.
+    ///
+    /// See also [`find_mut()`](Self::find_mut), which is more efficient if you
+    /// hold a mutable reference to this arena as it avoids acquiring locks.
+    pub fn find(&self, source: &Value, array_order: ArrayOrder) -> Option<IValue<H>> {
+        IValue::find(self, source, array_order)
+    }
+
+    /// Returns the given value's interned handle if it is already interned.
+    ///
+    /// Otherwise, this simply returns [`None`] without adding the value to this
+    /// arena.
+    ///
+    /// Contrary to [`find()`](Self::find), no locks are held internally because
+    /// this function already takes an exclusive mutable reference to this
+    /// arena.
+    pub fn find_mut(&mut self, source: &Value, array_order: ArrayOrder) -> Option<IValue<H>> {
+        IValue::find_mut(self, source, array_order)
+    }
+
     /// Retrieves the given interned value from this arena.
     ///
     /// The caller is responsible for ensuring that the same arena was used to
