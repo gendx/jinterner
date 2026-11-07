@@ -170,8 +170,19 @@ fn iter_eq_by<T, U>(
     }
 }
 
-impl<H> PartialEq<Value> for BoundValue<'_, H> {
-    fn eq(&self, other: &Value) -> bool {
+impl<H> BoundValue<'_, H>
+where
+    H: BuildHasher,
+{
+    /// Compares this interned value to the given value.
+    ///
+    /// All arrays recursively contained in the [`Value`] are considered to
+    /// follow the given [`ArrayOrder`] policy.
+    ///
+    /// See also [`BoundValueMut::eq_value()`], which is more efficient if you
+    /// hold a mutable reference to the underlying [`Jinterners`] arena as it
+    /// avoids acquiring locks.
+    pub fn eq_value(&self, other: &Value, array_order: ArrayOrder) -> bool {
         match (self.value.0, other) {
             (IValueImpl::Null, Value::Null) => true,
             (IValueImpl::Bool(a), Value::Bool(b)) => a == *b,
@@ -200,10 +211,15 @@ impl<H> PartialEq<Value> for BoundValue<'_, H> {
                             interners: self.interners,
                         }),
                         b.iter(),
-                        |v, w| v == *w,
+                        |v, w| v.eq_value(w, array_order),
                     )
             }
-            (IValueImpl::Set(_), Value::Array(_)) => todo!("Compare sets"),
+            (IValueImpl::Set(_), Value::Array(_)) => match array_order {
+                ArrayOrder::Preserve => false,
+                ArrayOrder::Unordered => {
+                    self.interners.find(other, array_order) == Some(*self.value)
+                }
+            },
             (IValueImpl::Object(a), Value::Object(b)) => {
                 let a = self.interners.iobject.lookup(a);
                 if a.len() != b.len() {
@@ -236,7 +252,7 @@ impl<H> PartialEq<Value> for BoundValue<'_, H> {
                         )
                     }),
                     b.into_iter(),
-                    |(k, v), (l, w)| k == l && v == *w,
+                    |(k, v), (l, w)| k == l && v.eq_value(w, array_order),
                 )
             }
             _ => false,
@@ -244,9 +260,126 @@ impl<H> PartialEq<Value> for BoundValue<'_, H> {
     }
 }
 
-impl<H> PartialEq<BoundValue<'_, H>> for Value {
-    fn eq(&self, other: &BoundValue<'_, H>) -> bool {
-        other == self
+/// An [`IValue`] interned value together with a mutable reference to the
+/// associated [`Jinterners`] arena.
+///
+/// This can be faster than a [`BoundValue`] to compare to a [`Value`], as it
+/// doesn't require acquiring locks.
+pub struct BoundValueMut<'a, H = DefaultBuildHasher> {
+    value: &'a IValue<H>,
+    interners: &'a mut Jinterners<H>,
+}
+
+impl<'a, H> BoundValueMut<'a, H> {
+    /// Binds the given [`IValue`] with its associated [`Jinterners`] arena.
+    pub fn new(value: &'a IValue<H>, interners: &'a mut Jinterners<H>) -> Self {
+        Self { value, interners }
+    }
+
+    /// Downgrades to an immutable [`BoundValue`].
+    pub fn as_ref(&self) -> BoundValue<'_, H> {
+        BoundValue {
+            value: self.value,
+            interners: self.interners,
+        }
+    }
+}
+
+impl<H> Debug for BoundValueMut<'_, H> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BoundValueMut")
+            .field("value", self.value)
+            .field("interners", &(self.interners as *const _))
+            .finish()
+    }
+}
+
+impl<H> BoundValueMut<'_, H>
+where
+    H: BuildHasher,
+{
+    /// Compares this interned value to the given value.
+    ///
+    /// All arrays recursively contained in the [`Value`] are considered to
+    /// follow the given [`ArrayOrder`] policy.
+    ///
+    /// Contrary to [`BoundValue::eq_value()`], no locks are held internally
+    /// because this struct already takes an exclusive mutable reference to the
+    /// underlying [`Jinterners`] arena.
+    pub fn eq_value(&mut self, other: &Value, array_order: ArrayOrder) -> bool {
+        match (self.value.0, other) {
+            (IValueImpl::Null, Value::Null) => true,
+            (IValueImpl::Bool(a), Value::Bool(b)) => a == *b,
+            (IValueImpl::U32(a), Value::Number(b)) => b
+                .as_u64()
+                .is_some_and(|b| u64::from(u32::from_ne_bytes(a)) == b),
+            (IValueImpl::I32(a), Value::Number(b)) => b
+                .as_i64()
+                .is_some_and(|b| i64::from(i32::from_ne_bytes(a)) == b),
+            (IValueImpl::U64(a), Value::Number(b)) => b
+                .as_u64()
+                .is_some_and(|b| self.interners.uint64.lookup(a) == b),
+            (IValueImpl::I64(a), Value::Number(b)) => b
+                .as_i64()
+                .is_some_and(|b| self.interners.int64.lookup(a) == b),
+            (IValueImpl::F64(a), Value::Number(b)) => b
+                .as_f64()
+                .is_some_and(|b| self.interners.float64.lookup(a).0.0 == b),
+            (IValueImpl::String(a), Value::String(b)) => self.interners.string.lookup(a) == b,
+            (IValueImpl::Array(a), Value::Array(b)) => {
+                let a = self.interners.iarray.lookup(a);
+                if a.len() != b.len() {
+                    return false;
+                }
+
+                let a: Box<[_]> = a.iter().copied().collect();
+                iter_eq_by(a.iter(), b.iter(), |v, w| {
+                    BoundValueMut::new(v, self.interners).eq_value(w, array_order)
+                })
+            }
+            (IValueImpl::Set(_), Value::Array(_)) => match array_order {
+                ArrayOrder::Preserve => false,
+                ArrayOrder::Unordered => {
+                    self.interners.find_mut(other, array_order) == Some(*self.value)
+                }
+            },
+            (IValueImpl::Object(a), Value::Object(b)) => {
+                let a = self.interners.iobject.lookup(a);
+                if a.len() != b.len() {
+                    return false;
+                }
+
+                // The interner has its own order for InternedStrKey (based on
+                // interned indices). We need to order them back as canonical
+                // strings.
+                //
+                // If the `preserve_order` feature of Serde is enabled, we also
+                // need to sort the Serde object. As there is no way to know if
+                // the feature is enabled, we always sort.
+                let mut a: Box<[_]> = a
+                    .iter()
+                    .map(|(k, v)| (self.interners.string.lookup(k.0), v))
+                    .collect();
+                let mut b: Box<[_]> = b.iter().collect();
+                a.sort_unstable_by_key(|(k, _)| *k);
+                b.sort_unstable_by_key(|(k, _)| *k);
+
+                // Work around the borrow checker: the keys in `a` borrow from
+                // `self.interner`, which prevents creating a `BoundValueMut`
+                // using a `&mut self.interner` later in this block. Therefore,
+                // we compare the keys first, then discard them to compare
+                // the values with a `BoundValueMut`.
+                if !iter_eq_by(a.iter(), b.iter(), |(k, _), (l, _)| k == l) {
+                    return false;
+                }
+
+                let a: Box<[_]> = a.into_iter().map(|(_, v)| *v).collect();
+                iter_eq_by(a.into_iter(), b.into_iter(), |v, (_, w)| {
+                    BoundValueMut::new(&v, self.interners).eq_value(w, array_order)
+                })
+            }
+            _ => false,
+        }
     }
 }
 

@@ -5,8 +5,8 @@ use criterion::{
     criterion_main,
 };
 use jinterner::{
-    ArrayOrder, BoundValue, BufferPool, HashbrownBuildHasher, IValue, InterningDeserializer,
-    InterningDeserializerMut, Jinterners, StdBuildHasher,
+    ArrayOrder, BoundValue, BoundValueMut, BufferPool, HashbrownBuildHasher, IValue,
+    InterningDeserializer, InterningDeserializerMut, Jinterners, StdBuildHasher,
 };
 use serde_json::Value;
 use std::fs::File;
@@ -52,7 +52,7 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
         compare_inner::<StdBuildHasher>(
             &mut group,
             name,
-            Some("compare_serde_value"),
+            "compare_serde_value",
             "compare_optimized",
             &input,
             ArrayOrder::Preserve,
@@ -60,7 +60,7 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
         compare_inner::<StdBuildHasher>(
             &mut group,
             name,
-            None,
+            "compare_unordered_serde_value",
             "compare_unordered_optimized",
             &input,
             ArrayOrder::Unordered,
@@ -69,7 +69,7 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
         compare_inner::<HashbrownBuildHasher>(
             &mut group,
             name,
-            Some("compare_hashbrown_serde_value"),
+            "compare_hashbrown_serde_value",
             "compare_hashbrown_optimized",
             &input,
             ArrayOrder::Preserve,
@@ -77,7 +77,7 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
         compare_inner::<HashbrownBuildHasher>(
             &mut group,
             name,
-            None,
+            "compare_hashbrown_unordered_serde_value",
             "compare_hashbrown_unordered_optimized",
             &input,
             ArrayOrder::Unordered,
@@ -91,7 +91,7 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
 fn compare_inner<H: Default + BuildHasher>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
-    title_serde_value: Option<&str>,
+    title_serde_value: &str,
     title_opt: &str,
     input: &[u8],
     array_order: ArrayOrder,
@@ -99,44 +99,29 @@ fn compare_inner<H: Default + BuildHasher>(
     let mut jinterners: Jinterners<H> = Jinterners::default();
     let ivalue = IValue::from_json_slice_mut(input, &mut jinterners, array_order)
         .with_context(|| format!("Failed to parse file data/{name}.json with jinterner"))?;
-    let bound = BoundValue::new(&ivalue, &jinterners);
 
-    if let Some(title_serde_value) = title_serde_value {
-        let value = serde_json::from_slice(input)
-            .with_context(|| format!("Failed to parse file data/{name}.json with serde_json"))?;
+    let value = serde_json::from_slice(input)
+        .with_context(|| format!("Failed to parse file data/{name}.json with serde_json"))?;
 
-        assert_eq!(bound, value);
-        group.bench_with_input(
-            BenchmarkId::new(title_serde_value, name),
-            &(bound, value),
-            compare_values,
-        );
-    }
+    let mut bound = BoundValueMut::new(&ivalue, &mut jinterners);
+    assert!(bound.eq_value(&value, array_order));
+    group.bench_function(BenchmarkId::new(title_serde_value, name), |bencher| {
+        bencher.iter(|| bound.eq_value(&value, array_order))
+    });
 
     if let Some((jinterners_opt, mapping)) = jinterners.optimize(None) {
         let ivalue_opt = mapping.map(ivalue);
-        let bound_opt = BoundValue::new(&ivalue_opt, &jinterners_opt);
 
+        let bound = BoundValue::new(&ivalue, &jinterners);
+        let bound_opt = BoundValue::new(&ivalue_opt, &jinterners_opt);
         assert_eq!(bound, bound_opt);
-        group.bench_with_input(
-            BenchmarkId::new(title_opt, name),
-            &(bound, bound_opt),
-            compare_bound_values,
-        );
+
+        group.bench_function(BenchmarkId::new(title_opt, name), |bencher| {
+            bencher.iter(|| bound == bound_opt)
+        });
     }
 
     Ok(())
-}
-
-fn compare_values<H: BuildHasher>(bencher: &mut Bencher, (lhs, rhs): &(BoundValue<'_, H>, Value)) {
-    bencher.iter(|| lhs == rhs)
-}
-
-fn compare_bound_values<H: BuildHasher, I>(
-    bencher: &mut Bencher,
-    (lhs, rhs): &(BoundValue<'_, H>, BoundValue<'_, I>),
-) {
-    bencher.iter(|| lhs == rhs)
 }
 
 fn parse(c: &mut Criterion) {

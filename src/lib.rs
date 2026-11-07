@@ -45,7 +45,7 @@ pub use detail::InterningDeserializer;
 pub use detail::InterningDeserializerMut;
 pub use detail::mapping::Mapping;
 use detail::mapping::{MappingNoScalars, MappingScalars};
-pub use detail::{ArrayOrder, BoundValue, IValue, InternedStrKey, MapRef, ValueRef};
+pub use detail::{ArrayOrder, BoundValue, BoundValueMut, IValue, InternedStrKey, MapRef, ValueRef};
 #[cfg(feature = "get-size2")]
 use get_size2::{GetSize, GetSizeTracker};
 #[cfg(feature = "postcard-schema")]

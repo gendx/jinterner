@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use jinterner::{ArrayOrder, BoundValue, IValue, Jinterners};
+use jinterner::{ArrayOrder, BoundValue, BoundValueMut, IValue, Jinterners};
 use rstest::rstest;
 use serde::Serialize;
 use std::fs::File;
@@ -60,10 +60,7 @@ fn test_intern_matches_serde_json(#[files("data/**/*.json")] mut path: PathBuf) 
     let value = serde_json::from_slice(&input)
         .with_context(|| format!("Failed to deserialize file data/{name}.json with serde_json"))?;
 
-    assert_eq!(
-        jinterners.find_mut(&value, ArrayOrder::Preserve),
-        Some(ivalue)
-    );
+    assert!(BoundValueMut::new(&ivalue, &mut jinterners).eq_value(&value, ArrayOrder::Preserve));
 
     Ok(())
 }
@@ -149,10 +146,7 @@ fn test_intern_unordered_set_matches_serde_json(
     let value = serde_json::from_slice(&input)
         .with_context(|| format!("Failed to deserialize file data/{name}.json with serde_json"))?;
 
-    assert_eq!(
-        jinterners.find_mut(&value, ArrayOrder::Unordered),
-        Some(ivalue)
-    );
+    assert!(BoundValueMut::new(&ivalue, &mut jinterners).eq_value(&value, ArrayOrder::Unordered));
 
     Ok(())
 }
