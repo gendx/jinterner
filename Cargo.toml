@@ -45,7 +45,7 @@ simd-json = "0.19.0"
 
 [[test]]
 name = "integration"
-required-features = ["serde"]
+required-features = ["serde", "std"]
 
 [[bench]]
 name = "criterion"

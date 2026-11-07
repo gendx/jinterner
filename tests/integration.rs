@@ -121,6 +121,10 @@ fn test_optimize_unordered_arrays(#[files("data/**/*.json")] mut path: PathBuf) 
         None => (jinterners, ivalue),
         Some((jinterners_opt, mapping)) => {
             let ivalue_opt = mapping.map(ivalue);
+            assert_eq!(
+                BoundValue::new(&ivalue, &jinterners),
+                BoundValue::new(&ivalue_opt, &jinterners_opt)
+            );
             (jinterners_opt, ivalue_opt)
         }
     };

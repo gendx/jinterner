@@ -1,3 +1,5 @@
+#[cfg(feature = "std")]
+mod compare;
 #[cfg(feature = "serde")]
 mod de;
 pub mod mapping;
@@ -17,6 +19,8 @@ use alloc::vec::Vec;
 use blazinterner::{
     ArenaStr, DefaultBuildHasher, Index, Interned, InternedSlice, InternedStr, U32,
 };
+#[cfg(feature = "std")]
+use compare::Comparator;
 use core::cmp::Ordering;
 use core::fmt::Debug;
 use core::hash::{BuildHasher, Hash, Hasher};
@@ -85,89 +89,26 @@ impl<H> Debug for BoundValue<'_, H> {
     }
 }
 
-impl<'a, 'b, H, I> PartialEq<BoundValue<'b, I>> for BoundValue<'a, H> {
-    fn eq(&self, other: &BoundValue<'b, I>) -> bool {
-        match (self.value.0, other.value.0) {
-            (IValueImpl::Null, IValueImpl::Null) => true,
-            (IValueImpl::Bool(a), IValueImpl::Bool(b)) => a == b,
-            (IValueImpl::U32(a), IValueImpl::U32(b)) => a == b,
-            (IValueImpl::I32(a), IValueImpl::I32(b)) => a == b,
-            (IValueImpl::U64(a), IValueImpl::U64(b)) => {
-                self.interners.uint64.lookup(a) == other.interners.uint64.lookup(b)
-            }
-            (IValueImpl::I64(a), IValueImpl::I64(b)) => {
-                self.interners.int64.lookup(a) == other.interners.int64.lookup(b)
-            }
-            (IValueImpl::F64(a), IValueImpl::F64(b)) => {
-                self.interners.float64.lookup(a) == other.interners.float64.lookup(b)
-            }
-            (IValueImpl::String(a), IValueImpl::String(b)) => {
-                self.interners.string.lookup(a) == other.interners.string.lookup(b)
-            }
-            (IValueImpl::Array(a), IValueImpl::Array(b)) => {
-                let a = self.interners.iarray.lookup(a);
-                let b = other.interners.iarray.lookup(b);
-                a.len() == b.len()
-                    && a.iter()
-                        .map(|value| BoundValue {
-                            value,
-                            interners: self.interners,
-                        })
-                        .eq(b.iter().map(|value| BoundValue {
-                            value,
-                            interners: other.interners,
-                        }))
-            }
-            (IValueImpl::Set(_), IValueImpl::Set(_)) => todo!("Compare sets"),
-            (IValueImpl::Object(a), IValueImpl::Object(b)) => {
-                let a = self.interners.iobject.lookup(a);
-                let b = other.interners.iobject.lookup(b);
-                if a.len() != b.len() {
-                    return false;
-                }
-
-                // Each interner has its own order for InternedStrKey (based on
-                // interned indices). We need to order them back as canonical
-                // strings.
-                let mut a: Box<[_]> = a
-                    .iter()
-                    .map(|(k, v)| (self.interners.string.lookup(k.0), v))
-                    .collect();
-                let mut b: Box<[_]> = b
-                    .iter()
-                    .map(|(k, v)| (other.interners.string.lookup(k.0), v))
-                    .collect();
-                a.sort_unstable_by_key(|(k, _)| *k);
-                b.sort_unstable_by_key(|(k, _)| *k);
-
-                iter_eq_by(
-                    a.into_iter().map(|(k, value)| {
-                        (
-                            k,
-                            BoundValue {
-                                value,
-                                interners: self.interners,
-                            },
-                        )
-                    }),
-                    b.into_iter().map(|(k, value)| {
-                        (
-                            k,
-                            BoundValue {
-                                value,
-                                interners: other.interners,
-                            },
-                        )
-                    }),
-                    |(k, v), (l, w)| k == l && v == w,
-                )
-            }
-            _ => false,
-        }
+impl<H> Clone for BoundValue<'_, H> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
 
-impl<H> Eq for BoundValue<'_, H> {}
+impl<H> Copy for BoundValue<'_, H> {}
+
+#[cfg(feature = "std")]
+impl<'a, 'b, H, I> PartialEq<BoundValue<'b, I>> for BoundValue<'a, H>
+where
+    H: BuildHasher,
+{
+    fn eq(&self, other: &BoundValue<'b, I>) -> bool {
+        Comparator::eq(self, other)
+    }
+}
+
+#[cfg(feature = "std")]
+impl<H> Eq for BoundValue<'_, H> where H: BuildHasher {}
 
 // TODO: use Iterator::eq_by when feature(iter_order_by) becomes stable.
 fn iter_eq_by<T, U>(

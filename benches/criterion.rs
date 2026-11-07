@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
+use criterion::measurement::WallTime;
 use criterion::{
-    BatchSize, Bencher, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+    BatchSize, Bencher, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group,
+    criterion_main,
 };
 use jinterner::{
     ArrayOrder, BoundValue, BufferPool, HashbrownBuildHasher, IValue, InterningDeserializer,
@@ -47,33 +49,75 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
         file.read_to_end(&mut input)
             .with_context(|| format!("Failed to read file data/{name}.json"))?;
 
-        let mut jinterners: Jinterners<StdBuildHasher> = Jinterners::default();
-        let ivalue = IValue::from_json_slice_mut(&input, &mut jinterners, ArrayOrder::Preserve)
-            .with_context(|| format!("Failed to parse file data/{name}.json"))?;
+        compare_inner::<StdBuildHasher>(
+            &mut group,
+            name,
+            "compare_self",
+            "compare_optimized",
+            &input,
+            ArrayOrder::Preserve,
+        )?;
+        compare_inner::<StdBuildHasher>(
+            &mut group,
+            name,
+            "compare_unordered_self",
+            "compare_unordered_optimized",
+            &input,
+            ArrayOrder::Unordered,
+        )?;
 
-        group.bench_with_input(
-            BenchmarkId::new("compare_self", name),
-            &(
-                BoundValue::new(&ivalue, &jinterners),
-                BoundValue::new(&ivalue, &jinterners),
-            ),
-            compare_values,
-        );
-
-        if let Some((jinterners_opt, mapping)) = jinterners.optimize(None) {
-            let ivalue_opt = mapping.map(ivalue);
-            let bound = BoundValue::new(&ivalue, &jinterners);
-            let bound_opt = BoundValue::new(&ivalue_opt, &jinterners_opt);
-            assert_eq!(bound, bound_opt);
-
-            group.bench_with_input(
-                BenchmarkId::new("compare_optimized", name),
-                &(bound, bound_opt),
-                compare_values,
-            );
-        }
+        compare_inner::<HashbrownBuildHasher>(
+            &mut group,
+            name,
+            "compare_hashbrown_self",
+            "compare_hashbrown_optimized",
+            &input,
+            ArrayOrder::Preserve,
+        )?;
+        compare_inner::<HashbrownBuildHasher>(
+            &mut group,
+            name,
+            "compare_hashbrown_unordered_self",
+            "compare_hashbrown_unordered_optimized",
+            &input,
+            ArrayOrder::Unordered,
+        )?;
     }
     group.finish();
+
+    Ok(())
+}
+
+fn compare_inner<H: Default + BuildHasher>(
+    group: &mut BenchmarkGroup<WallTime>,
+    name: &str,
+    title: &str,
+    title_opt: &str,
+    input: &[u8],
+    array_order: ArrayOrder,
+) -> Result<()> {
+    let mut jinterners: Jinterners<H> = Jinterners::default();
+    let ivalue = IValue::from_json_slice_mut(input, &mut jinterners, array_order)
+        .with_context(|| format!("Failed to parse file data/{name}.json"))?;
+
+    let bound = BoundValue::new(&ivalue, &jinterners);
+    group.bench_with_input(
+        BenchmarkId::new(title, name),
+        &(bound, bound),
+        compare_values,
+    );
+
+    if let Some((jinterners_opt, mapping)) = jinterners.optimize(None) {
+        let ivalue_opt = mapping.map(ivalue);
+        let bound_opt = BoundValue::new(&ivalue_opt, &jinterners_opt);
+        assert_eq!(bound, bound_opt);
+
+        group.bench_with_input(
+            BenchmarkId::new(title_opt, name),
+            &(bound, bound_opt),
+            compare_values,
+        );
+    }
 
     Ok(())
 }
