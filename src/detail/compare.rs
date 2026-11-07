@@ -1,20 +1,21 @@
 use super::{BoundValue, Float64, IValue, IValueImpl, InternedStrKey};
 use crate::Jinterners;
 use alloc::boxed::Box;
-use blazinterner::{Interned, InternedSlice, InternedStr, U32};
-use core::hash::BuildHasher;
+use blazinterner::{Index, Interned, InternedSlice, InternedStr, U32};
+use core::hash::{BuildHasher, Hash};
 use std::collections::HashMap;
 
 #[expect(clippy::type_complexity)]
 pub struct Comparator<'a, H, I> {
     interners: &'a Jinterners<H>,
-    map_uint64: HashMap<Interned<u64, u64, I, U32>, Interned<u64, u64, H, U32>>,
-    map_int64: HashMap<Interned<i64, i64, I, U32>, Interned<i64, i64, H, U32>>,
-    map_float64: HashMap<Interned<Float64, Float64, I, U32>, Interned<Float64, Float64, H, U32>>,
-    map_string: HashMap<InternedStr<I, U32>, InternedStr<H, U32>>,
-    map_array: HashMap<InternedSlice<IValue<I>, I, U32>, InternedSlice<IValue<H>, H, U32>>,
-    map_set: HashMap<InternedSlice<IValue<I>, I, U32>, InternedSlice<IValue<H>, H, U32>>,
-    map_object: HashMap<
+    map_uint64: AdaptiveMap<Interned<u64, u64, I, U32>, Interned<u64, u64, H, U32>>,
+    map_int64: AdaptiveMap<Interned<i64, i64, I, U32>, Interned<i64, i64, H, U32>>,
+    map_float64:
+        AdaptiveMap<Interned<Float64, Float64, I, U32>, Interned<Float64, Float64, H, U32>>,
+    map_string: AdaptiveMap<InternedStr<I, U32>, InternedStr<H, U32>>,
+    map_array: AdaptiveMap<InternedSlice<IValue<I>, I, U32>, InternedSlice<IValue<H>, H, U32>>,
+    map_set: AdaptiveMap<InternedSlice<IValue<I>, I, U32>, InternedSlice<IValue<H>, H, U32>>,
+    map_object: AdaptiveMap<
         InternedSlice<(InternedStrKey<I>, IValue<I>), I, U32>,
         InternedSlice<(InternedStrKey<H>, IValue<H>), H, U32>,
     >,
@@ -25,19 +26,19 @@ where
     H: BuildHasher,
 {
     pub fn eq<'b>(lhs: &BoundValue<'a, H>, rhs: &BoundValue<'b, I>) -> bool {
-        Self::new(lhs.interners).mapped(rhs) == Some(*lhs.value)
+        Self::new(lhs.interners, rhs.interners).mapped(rhs) == Some(*lhs.value)
     }
 
-    fn new(interners: &'a Jinterners<H>) -> Self {
+    fn new<'b>(interners: &'a Jinterners<H>, other_interners: &'b Jinterners<I>) -> Self {
         Self {
             interners,
-            map_uint64: HashMap::new(),
-            map_int64: HashMap::new(),
-            map_float64: HashMap::new(),
-            map_string: HashMap::new(),
-            map_array: HashMap::new(),
-            map_set: HashMap::new(),
-            map_object: HashMap::new(),
+            map_uint64: AdaptiveMap::new(other_interners.uint64.len()),
+            map_int64: AdaptiveMap::new(other_interners.int64.len()),
+            map_float64: AdaptiveMap::new(other_interners.float64.len()),
+            map_string: AdaptiveMap::new(other_interners.string.strings()),
+            map_array: AdaptiveMap::new(other_interners.iarray.slices()),
+            map_set: AdaptiveMap::new(other_interners.iset.slices()),
+            map_object: AdaptiveMap::new(other_interners.iobject.slices()),
         }
     }
 
@@ -194,5 +195,102 @@ where
                 IValueImpl::Object(id)
             }
         }))
+    }
+}
+
+// A map that switches from a sparse HashMap representation to a dense
+// fixed-size Vec once the load factor exceeds a threshold.
+enum AdaptiveMap<K, V> {
+    HashMap {
+        map: HashMap<K, V>,
+        /// Threshold for map.len() at which point to switch to the dense
+        /// representation.
+        threshold: usize,
+        /// Size of the Vec for the dense representation.
+        range: usize,
+    },
+    Vec(Vec<Option<V>>),
+}
+
+impl<K, V> AdaptiveMap<K, V>
+where
+    K: Hash + Eq + Indexable,
+    V: Copy,
+{
+    fn new(range: usize) -> Self {
+        AdaptiveMap::HashMap {
+            map: HashMap::new(),
+            threshold: range / 8,
+            range,
+        }
+    }
+
+    fn get(&self, key: &K) -> Option<&V> {
+        match self {
+            AdaptiveMap::HashMap {
+                map,
+                threshold: _,
+                range: _,
+            } => map.get(key),
+            AdaptiveMap::Vec(v) => match v.get(key.index()) {
+                None => None,
+                Some(opt) => opt.as_ref(),
+            },
+        }
+    }
+
+    fn insert(&mut self, key: K, value: V) {
+        match self {
+            AdaptiveMap::HashMap {
+                map,
+                threshold,
+                range,
+            } => {
+                if map.len() < *threshold {
+                    map.insert(key, value);
+                } else {
+                    let mut vec = vec![None; *range];
+                    for (k, v) in map.iter() {
+                        vec[k.index()] = Some(*v);
+                    }
+                    vec[key.index()] = Some(value);
+                    *self = AdaptiveMap::Vec(vec);
+                }
+            }
+            AdaptiveMap::Vec(vec) => {
+                vec[key.index()] = Some(value);
+            }
+        }
+    }
+}
+
+trait Indexable {
+    fn index(&self) -> usize;
+}
+
+impl<T, U, H, I> Indexable for Interned<T, U, H, I>
+where
+    I: Index,
+{
+    fn index(&self) -> usize {
+        self.id().to_usize()
+    }
+}
+
+impl<T, H, I> Indexable for InternedSlice<T, H, I>
+where
+    I: Index,
+{
+    fn index(&self) -> usize {
+        self.id().to_usize()
+    }
+}
+
+impl<H, I> Indexable for InternedStr<H, I>
+where
+    I: Index,
+{
+    fn index(&self) -> usize {
+        self.id().to_usize()
     }
 }
