@@ -52,7 +52,6 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
         compare_inner::<StdBuildHasher>(
             &mut group,
             name,
-            "compare_self",
             "compare_optimized",
             &input,
             ArrayOrder::Preserve,
@@ -60,7 +59,6 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
         compare_inner::<StdBuildHasher>(
             &mut group,
             name,
-            "compare_unordered_self",
             "compare_unordered_optimized",
             &input,
             ArrayOrder::Unordered,
@@ -69,7 +67,6 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
         compare_inner::<HashbrownBuildHasher>(
             &mut group,
             name,
-            "compare_hashbrown_self",
             "compare_hashbrown_optimized",
             &input,
             ArrayOrder::Preserve,
@@ -77,7 +74,6 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
         compare_inner::<HashbrownBuildHasher>(
             &mut group,
             name,
-            "compare_hashbrown_unordered_self",
             "compare_hashbrown_unordered_optimized",
             &input,
             ArrayOrder::Unordered,
@@ -91,7 +87,6 @@ fn compare_impl(c: &mut Criterion) -> Result<()> {
 fn compare_inner<H: Default + BuildHasher>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
-    title: &str,
     title_opt: &str,
     input: &[u8],
     array_order: ArrayOrder,
@@ -100,15 +95,9 @@ fn compare_inner<H: Default + BuildHasher>(
     let ivalue = IValue::from_json_slice_mut(input, &mut jinterners, array_order)
         .with_context(|| format!("Failed to parse file data/{name}.json"))?;
 
-    let bound = BoundValue::new(&ivalue, &jinterners);
-    group.bench_with_input(
-        BenchmarkId::new(title, name),
-        &(bound, bound),
-        compare_values,
-    );
-
     if let Some((jinterners_opt, mapping)) = jinterners.optimize(None) {
         let ivalue_opt = mapping.map(ivalue);
+        let bound = BoundValue::new(&ivalue, &jinterners);
         let bound_opt = BoundValue::new(&ivalue_opt, &jinterners_opt);
         assert_eq!(bound, bound_opt);
 

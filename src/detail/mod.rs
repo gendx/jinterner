@@ -103,6 +103,26 @@ where
     H: BuildHasher,
 {
     fn eq(&self, other: &BoundValue<'b, I>) -> bool {
+        if std::ptr::eq(
+            self.interners as *const Jinterners<H> as *const (),
+            other.interners as *const Jinterners<I> as *const (),
+        ) {
+            return match (self.value.0, other.value.0) {
+                (IValueImpl::Null, IValueImpl::Null) => true,
+                (IValueImpl::Bool(a), IValueImpl::Bool(b)) => a == b,
+                (IValueImpl::U32(a), IValueImpl::U32(b)) => a == b,
+                (IValueImpl::I32(a), IValueImpl::I32(b)) => a == b,
+                (IValueImpl::U64(a), IValueImpl::U64(b)) => a.id() == b.id(),
+                (IValueImpl::I64(a), IValueImpl::I64(b)) => a.id() == b.id(),
+                (IValueImpl::F64(a), IValueImpl::F64(b)) => a.id() == b.id(),
+                (IValueImpl::String(a), IValueImpl::String(b)) => a.id() == b.id(),
+                (IValueImpl::Array(a), IValueImpl::Array(b)) => a.id() == b.id(),
+                (IValueImpl::Set(a), IValueImpl::Set(b)) => a.id() == b.id(),
+                (IValueImpl::Object(a), IValueImpl::Object(b)) => a.id() == b.id(),
+                _ => false,
+            };
+        }
+
         match (self.value.0, other.value.0) {
             (IValueImpl::Null, IValueImpl::Null) => true,
             (IValueImpl::Bool(a), IValueImpl::Bool(b)) => a == b,
