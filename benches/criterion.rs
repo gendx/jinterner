@@ -3,7 +3,7 @@ use criterion::{
     BatchSize, Bencher, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use jinterner::{
-    ArrayOrder, BufferPool, HashbrownBuildHasher, IValue, InterningDeserializer,
+    ArrayOrder, BoundValue, BufferPool, HashbrownBuildHasher, IValue, InterningDeserializer,
     InterningDeserializerMut, Jinterners, StdBuildHasher,
 };
 use serde_json::Value;
@@ -14,6 +14,7 @@ use std::io::Read;
 
 const FILES: &[&str] = &[
     "open_data/idfm_disruptions",
+    "open_data/idfm_estimated_timetable",
     "open_data/lime_paris_free_bike_status",
     "simd_json/apache_builds",
     "simd_json/canada",
@@ -31,6 +32,59 @@ const FILES: &[&str] = &[
     "simd_json/update-center",
 ];
 
+fn compare(c: &mut Criterion) {
+    if let Err(e) = compare_impl(c) {
+        panic!("Benchmarking failed: {e:?}");
+    }
+}
+
+fn compare_impl(c: &mut Criterion) -> Result<()> {
+    let mut group = c.benchmark_group("parse");
+    for name in FILES {
+        let mut file = File::open(format!("data/{name}.json"))
+            .with_context(|| format!("Failed to read file data/{name}.json"))?;
+        let mut input = Vec::new();
+        file.read_to_end(&mut input)
+            .with_context(|| format!("Failed to read file data/{name}.json"))?;
+
+        let mut jinterners: Jinterners<StdBuildHasher> = Jinterners::default();
+        let ivalue = IValue::from_json_slice_mut(&input, &mut jinterners, ArrayOrder::Preserve)
+            .with_context(|| format!("Failed to parse file data/{name}.json"))?;
+
+        group.bench_with_input(
+            BenchmarkId::new("compare_self", name),
+            &(
+                BoundValue::new(&ivalue, &jinterners),
+                BoundValue::new(&ivalue, &jinterners),
+            ),
+            compare_values,
+        );
+
+        if let Some((jinterners_opt, mapping)) = jinterners.optimize(None) {
+            let ivalue_opt = mapping.map(ivalue);
+            let bound = BoundValue::new(&ivalue, &jinterners);
+            let bound_opt = BoundValue::new(&ivalue_opt, &jinterners_opt);
+            assert_eq!(bound, bound_opt);
+
+            group.bench_with_input(
+                BenchmarkId::new("compare_optimized", name),
+                &(bound, bound_opt),
+                compare_values,
+            );
+        }
+    }
+    group.finish();
+
+    Ok(())
+}
+
+fn compare_values<H: BuildHasher, I>(
+    bencher: &mut Bencher,
+    (lhs, rhs): &(BoundValue<'_, H>, BoundValue<'_, I>),
+) {
+    bencher.iter(|| lhs == rhs)
+}
+
 fn parse(c: &mut Criterion) {
     if let Err(e) = parse_impl(c) {
         panic!("Benchmarking failed: {e:?}");
@@ -39,7 +93,10 @@ fn parse(c: &mut Criterion) {
 
 fn parse_impl(c: &mut Criterion) -> Result<()> {
     let mut group = c.benchmark_group("parse");
-    for name in FILES {
+    for name in FILES
+        .iter()
+        .filter(|f| **f != "open_data/idfm_estimated_timetable")
+    {
         let mut file = File::open(format!("data/{name}.json"))
             .with_context(|| format!("Failed to read file data/{name}.json"))?;
         let mut input = Vec::new();
@@ -174,5 +231,5 @@ fn parse_jinterner_simd_mut<H: Default + BuildHasher>(bencher: &mut Bencher, inp
     );
 }
 
-criterion_group!(benches, parse);
+criterion_group!(benches, compare, parse);
 criterion_main!(benches);
