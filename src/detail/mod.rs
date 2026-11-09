@@ -64,6 +64,17 @@ pub enum ArrayOrder {
     Unordered,
 }
 
+/// Configuration to indicate how to treat byte arrays when converting them to
+/// JSON values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytesPolicy {
+    /// Reject byte arrays and fail the conversion.
+    Reject,
+    /// Treat byte arrays as strings if they are valid UTF-8, and fail the
+    /// conversion otherwise.
+    TryUtf8,
+}
+
 /// An [`IValue`] interned value together with a reference to the associated
 /// [`Jinterners`] arena.
 ///
@@ -116,6 +127,7 @@ where
                 (IValueImpl::I64(a), IValueImpl::I64(b)) => a.id() == b.id(),
                 (IValueImpl::F64(a), IValueImpl::F64(b)) => a.id() == b.id(),
                 (IValueImpl::String(a), IValueImpl::String(b)) => a.id() == b.id(),
+                (IValueImpl::Bytes(a), IValueImpl::Bytes(b)) => a.id() == b.id(),
                 (IValueImpl::Array(a), IValueImpl::Array(b)) => a.id() == b.id(),
                 (IValueImpl::Set(a), IValueImpl::Set(b)) => a.id() == b.id(),
                 (IValueImpl::Object(a), IValueImpl::Object(b)) => a.id() == b.id(),
@@ -139,6 +151,9 @@ where
             }
             (IValueImpl::String(a), IValueImpl::String(b)) => {
                 self.interners.string.lookup(a) == other.interners.string.lookup(b)
+            }
+            (IValueImpl::Bytes(a), IValueImpl::Bytes(b)) => {
+                self.interners.bytes.lookup(a) == other.interners.bytes.lookup(b)
             }
             (IValueImpl::Array(_), IValueImpl::Array(_))
             | (IValueImpl::Set(_), IValueImpl::Set(_))
@@ -202,6 +217,9 @@ where
                 .as_f64()
                 .is_some_and(|b| self.interners.float64.lookup(a).0.0 == b),
             (IValueImpl::String(a), Value::String(b)) => self.interners.string.lookup(a) == b,
+            (IValueImpl::Bytes(a), Value::String(b)) => {
+                self.interners.bytes.lookup(a) == b.as_bytes()
+            }
             (IValueImpl::Array(a), Value::Array(b)) => {
                 let a = self.interners.iarray.lookup(a);
                 a.len() == b.len()
@@ -326,6 +344,9 @@ where
                 .as_f64()
                 .is_some_and(|b| self.interners.float64.lookup(a).0.0 == b),
             (IValueImpl::String(a), Value::String(b)) => self.interners.string.lookup(a) == b,
+            (IValueImpl::Bytes(a), Value::String(b)) => {
+                self.interners.bytes.lookup(a) == b.as_bytes()
+            }
             (IValueImpl::Array(a), Value::Array(b)) => {
                 let a = self.interners.iarray.lookup(a);
                 if a.len() != b.len() {
@@ -821,6 +842,58 @@ where
         IValueImpl::try_string_mut(interners, s).map(Self)
     }
 
+    /// Interns a byte slice.
+    ///
+    /// See also [`bytes_mut()`](Self::bytes_mut), which is more efficient if
+    /// you hold a mutable reference to the [`Jinterners`] arena as it avoids
+    /// acquiring locks.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_bytes()`](Self::try_bytes) for a fallible API.
+    #[cfg(feature = "sync")]
+    pub fn bytes(interners: &Jinterners<H>, b: &[u8]) -> Self {
+        Self(IValueImpl::bytes(interners, b))
+    }
+
+    /// Interns a byte slice.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// See also [`try_bytes_mut()`](Self::try_bytes_mut), which is more
+    /// efficient if you hold a mutable reference to the [`Jinterners`] arena as
+    /// it avoids acquiring locks.
+    #[cfg(feature = "sync")]
+    pub fn try_bytes(interners: &Jinterners<H>, b: &[u8]) -> Option<Self> {
+        IValueImpl::try_bytes(interners, b).map(Self)
+    }
+
+    /// Interns a byte slice.
+    ///
+    /// Contrary to [`bytes()`](Self::bytes), no locks are held internally
+    /// because this function already takes an exclusive mutable reference to
+    /// the [`Jinterners`] arena.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the arena is full. Use
+    /// [`try_bytes_mut()`](Self::try_bytes_mut) for a fallible API.
+    pub fn bytes_mut(interners: &mut Jinterners<H>, b: &[u8]) -> Self {
+        Self(IValueImpl::bytes_mut(interners, b))
+    }
+
+    /// Interns a byte slice.
+    ///
+    /// This returns [`None`] if the arena is full.
+    ///
+    /// Contrary to [`try_bytes()`](Self::try_bytes), no locks are held
+    /// internally because this function already takes an exclusive mutable
+    /// reference to the [`Jinterners`] arena.
+    pub fn try_bytes_mut(interners: &mut Jinterners<H>, b: &[u8]) -> Option<Self> {
+        IValueImpl::try_bytes_mut(interners, b).map(Self)
+    }
+
     /// Interns a JSON array, whose items are already interned.
     ///
     /// See also:
@@ -1214,12 +1287,16 @@ where
         IValueImpl::find_mut(interners, source, array_order).map(Self)
     }
 
-    pub(crate) fn lookup(&self, interners: &Jinterners<H>) -> Value {
-        self.0.lookup(interners)
+    pub(crate) fn lookup(&self, interners: &Jinterners<H>, bytes_policy: BytesPolicy) -> Value {
+        self.0.lookup(interners, bytes_policy)
     }
 
-    pub(crate) fn try_lookup(&self, interners: &Jinterners<H>) -> Option<Value> {
-        self.0.try_lookup(interners)
+    pub(crate) fn try_lookup(
+        &self,
+        interners: &Jinterners<H>,
+        bytes_policy: BytesPolicy,
+    ) -> Option<Value> {
+        self.0.try_lookup(interners, bytes_policy)
     }
 
     pub(crate) fn lookup_ref<'a>(&self, interners: &'a Jinterners<H>) -> ValueRef<'a, H> {
@@ -1497,6 +1574,7 @@ impl<H> IValue<H> {
             IValueImpl::I64(x) => builder.i64s.insert(x),
             IValueImpl::F64(x) => builder.f64s.insert(x),
             IValueImpl::String(s) => builder.strings.insert(s),
+            IValueImpl::Bytes(b) => builder.bytes.insert(b),
             IValueImpl::Array(a) => {
                 if builder.arrays.insert(a) {
                     builder.queue_arrays.push(a);
@@ -1557,6 +1635,7 @@ enum IValueImpl<H> {
     I64(Interned<i64, i64, H, U32>),
     F64(Interned<Float64, Float64, H, U32>),
     String(InternedStr<H, U32>),
+    Bytes(InternedSlice<u8, H, U32>),
     Array(InternedSlice<IValue<H>, H, U32>),
     Set(InternedSlice<IValue<H>, H, U32>),
     Object(InternedSlice<(InternedStrKey<H>, IValue<H>), H, U32>),
@@ -1579,6 +1658,7 @@ impl<H> Debug for IValueImpl<H> {
             IValueImpl::I64(x) => f.debug_tuple("IValue::I64").field(x).finish(),
             IValueImpl::F64(x) => f.debug_tuple("IValue::F64").field(x).finish(),
             IValueImpl::String(s) => f.debug_tuple("IValue::String").field(s).finish(),
+            IValueImpl::Bytes(b) => f.debug_tuple("IValue::Bytes").field(b).finish(),
             IValueImpl::Array(a) => f.debug_tuple("IValue::Array").field(a).finish(),
             IValueImpl::Set(a) => f.debug_tuple("IValue::Set").field(a).finish(),
             IValueImpl::Object(o) => f.debug_tuple("IValue::Object").field(o).finish(),
@@ -1605,6 +1685,7 @@ impl<H> PartialEq for IValueImpl<H> {
             (IValueImpl::I64(a), IValueImpl::I64(b)) => a == b,
             (IValueImpl::F64(a), IValueImpl::F64(b)) => a == b,
             (IValueImpl::String(a), IValueImpl::String(b)) => a == b,
+            (IValueImpl::Bytes(a), IValueImpl::Bytes(b)) => a == b,
             (IValueImpl::Array(a), IValueImpl::Array(b)) => a == b,
             (IValueImpl::Set(a), IValueImpl::Set(b)) => a == b,
             (IValueImpl::Object(a), IValueImpl::Object(b)) => a == b,
@@ -1639,6 +1720,7 @@ impl<H> Ord for IValueImpl<H> {
                 (IValueImpl::I64(a), IValueImpl::I64(b)) => a.cmp(b),
                 (IValueImpl::F64(a), IValueImpl::F64(b)) => a.cmp(b),
                 (IValueImpl::String(a), IValueImpl::String(b)) => a.cmp(b),
+                (IValueImpl::Bytes(a), IValueImpl::Bytes(b)) => a.cmp(b),
                 (IValueImpl::Array(a), IValueImpl::Array(b)) => a.cmp(b),
                 (IValueImpl::Set(a), IValueImpl::Set(b)) => a.cmp(b),
                 (IValueImpl::Object(a), IValueImpl::Object(b)) => a.cmp(b),
@@ -1663,6 +1745,7 @@ impl<H> Hash for IValueImpl<H> {
             IValueImpl::I64(x) => x.hash(state),
             IValueImpl::F64(x) => x.hash(state),
             IValueImpl::String(s) => s.hash(state),
+            IValueImpl::Bytes(b) => b.hash(state),
             IValueImpl::Array(a) => a.hash(state),
             IValueImpl::Set(a) => a.hash(state),
             IValueImpl::Object(o) => o.hash(state),
@@ -1703,12 +1786,15 @@ impl<H> Serialize for IValueImpl<H> {
             IValueImpl::String(x) => {
                 serializer.serialize_newtype_variant("IValueImpl", 7, "String", x)
             }
-            IValueImpl::Array(x) => {
-                serializer.serialize_newtype_variant("IValueImpl", 8, "Array", x)
+            IValueImpl::Bytes(x) => {
+                serializer.serialize_newtype_variant("IValueImpl", 8, "Bytes", x)
             }
-            IValueImpl::Set(x) => serializer.serialize_newtype_variant("IValueImpl", 9, "Set", x),
+            IValueImpl::Array(x) => {
+                serializer.serialize_newtype_variant("IValueImpl", 9, "Array", x)
+            }
+            IValueImpl::Set(x) => serializer.serialize_newtype_variant("IValueImpl", 10, "Set", x),
             IValueImpl::Object(x) => {
-                serializer.serialize_newtype_variant("IValueImpl", 10, "Object", x)
+                serializer.serialize_newtype_variant("IValueImpl", 11, "Object", x)
             }
         }
     }
@@ -1752,6 +1838,10 @@ impl<H> Schema for IValueImpl<H> {
                 ty: &DataModelVariant::NewtypeVariant(InternedStr::<H, U32>::SCHEMA),
             },
             &NamedVariant {
+                name: "Bytes",
+                ty: &DataModelVariant::NewtypeVariant(InternedSlice::<u8, H, U32>::SCHEMA),
+            },
+            &NamedVariant {
                 name: "Array",
                 ty: &DataModelVariant::NewtypeVariant(InternedSlice::<IValue<H>, H, U32>::SCHEMA),
             },
@@ -1778,8 +1868,8 @@ impl<'de, H> Deserialize<'de> for IValueImpl<H> {
         deserializer.deserialize_enum(
             "IValueImpl",
             &[
-                "Null", "Bool", "U32", "I32", "U64", "I64", "F64", "String", "Array", "Set",
-                "Object",
+                "Null", "Bool", "U32", "I32", "U64", "I64", "F64", "String", "Bytes", "Array",
+                "Set", "Object",
             ],
             IValueImplVisitor(PhantomData),
         )
@@ -1811,6 +1901,7 @@ impl<'de, H> Visitor<'de> for IValueImplVisitor<H> {
             I64,
             F64,
             String,
+            Bytes,
             Array,
             Set,
             Object,
@@ -1835,6 +1926,7 @@ impl<'de, H> Visitor<'de> for IValueImplVisitor<H> {
             IValueImplVariant::I64 => IValueImpl::I64(data.newtype_variant()?),
             IValueImplVariant::F64 => IValueImpl::F64(data.newtype_variant()?),
             IValueImplVariant::String => IValueImpl::String(data.newtype_variant()?),
+            IValueImplVariant::Bytes => IValueImpl::Bytes(data.newtype_variant()?),
             IValueImplVariant::Array => IValueImpl::Array(data.newtype_variant()?),
             IValueImplVariant::Set => IValueImpl::Set(data.newtype_variant()?),
             IValueImplVariant::Object => IValueImpl::Object(data.newtype_variant()?),
@@ -1854,9 +1946,10 @@ impl<H> IValueImpl<H> {
             IValueImpl::I64(_) => 5,
             IValueImpl::F64(_) => 6,
             IValueImpl::String(_) => 7,
-            IValueImpl::Array(_) => 8,
-            IValueImpl::Set(_) => 9,
-            IValueImpl::Object(_) => 10,
+            IValueImpl::Bytes(_) => 8,
+            IValueImpl::Array(_) => 9,
+            IValueImpl::Set(_) => 10,
+            IValueImpl::Object(_) => 11,
         }
     }
 }
@@ -2019,6 +2112,24 @@ where
 
     fn try_string_mut(interners: &mut Jinterners<H>, s: &str) -> Option<Self> {
         interners.string.try_intern_mut(s).map(IValueImpl::String)
+    }
+
+    #[cfg(feature = "sync")]
+    fn bytes(interners: &Jinterners<H>, b: &[u8]) -> Self {
+        IValueImpl::Bytes(interners.bytes.intern(b))
+    }
+
+    #[cfg(feature = "sync")]
+    fn try_bytes(interners: &Jinterners<H>, b: &[u8]) -> Option<Self> {
+        interners.bytes.try_intern(b).map(IValueImpl::Bytes)
+    }
+
+    fn bytes_mut(interners: &mut Jinterners<H>, b: &[u8]) -> Self {
+        IValueImpl::Bytes(interners.bytes.intern_mut(b))
+    }
+
+    fn try_bytes_mut(interners: &mut Jinterners<H>, b: &[u8]) -> Option<Self> {
+        interners.bytes.try_intern_mut(b).map(IValueImpl::Bytes)
     }
 
     #[cfg(feature = "sync")]
@@ -2450,14 +2561,16 @@ where
         }
     }
 
-    fn lookup(&self, interners: &Jinterners<H>) -> Value {
-        match self.try_lookup(interners) {
+    fn lookup(&self, interners: &Jinterners<H>, bytes_policy: BytesPolicy) -> Value {
+        match self.try_lookup(interners, bytes_policy) {
             Some(x) => x,
-            None => panic!("Interned index is out of bounds for this arena"),
+            None => panic!(
+                "Failed to lookup interned value as JSON: interned index is out of bounds for this arena, or bytes cannot be converted to string"
+            ),
         }
     }
 
-    fn try_lookup(&self, interners: &Jinterners<H>) -> Option<Value> {
+    fn try_lookup(&self, interners: &Jinterners<H>, bytes_policy: BytesPolicy) -> Option<Value> {
         Some(match self {
             IValueImpl::Null => Value::Null,
             IValueImpl::Bool(x) => Value::Bool(*x),
@@ -2480,12 +2593,18 @@ where
                 Value::Number(Number::from_f64(x).unwrap())
             }
             IValueImpl::String(s) => Value::String(interners.string.try_lookup(*s)?.into()),
+            IValueImpl::Bytes(b) => Value::String(match bytes_policy {
+                BytesPolicy::Reject => return None,
+                BytesPolicy::TryUtf8 => {
+                    str::from_utf8(interners.bytes.try_lookup(*b)?).ok()?.into()
+                }
+            }),
             IValueImpl::Array(a) => Value::Array(
                 interners
                     .iarray
                     .try_lookup(*a)?
                     .iter()
-                    .map(|v| interners.try_lookup(v))
+                    .map(|v| interners.try_lookup(v, bytes_policy))
                     .collect::<Option<_>>()?,
             ),
             IValueImpl::Set(a) => Value::Array(
@@ -2493,7 +2612,7 @@ where
                     .iset
                     .try_lookup(*a)?
                     .iter()
-                    .map(|v| interners.try_lookup(v))
+                    .map(|v| interners.try_lookup(v, bytes_policy))
                     .collect::<Option<_>>()?,
             ),
             IValueImpl::Object(o) => Value::Object(
@@ -2504,7 +2623,7 @@ where
                     .map(|(k, v)| {
                         Some((
                             interners.string.try_lookup(k.0)?.into(),
-                            interners.try_lookup(v)?,
+                            interners.try_lookup(v, bytes_policy)?,
                         ))
                     })
                     .collect::<Option<_>>()?,
@@ -2529,6 +2648,7 @@ where
             IValueImpl::I64(x) => ValueRef::I64(interners.int64.try_lookup(*x)?),
             IValueImpl::F64(x) => ValueRef::F64(interners.float64.try_lookup(*x)?.0.0),
             IValueImpl::String(s) => ValueRef::String(interners.string.try_lookup(*s)?),
+            IValueImpl::Bytes(b) => ValueRef::Bytes(interners.bytes.try_lookup(*b)?),
             IValueImpl::Array(a) => ValueRef::Array(interners.iarray.try_lookup(*a)?),
             IValueImpl::Set(a) => ValueRef::Set(interners.iset.try_lookup(*a)?),
             IValueImpl::Object(o) => ValueRef::Object(MapRef {
@@ -2539,7 +2659,7 @@ where
     }
 }
 
-/// A shallow reference to a JSON value.
+/// A shallow reference to a JSON-like value.
 pub enum ValueRef<'a, H = DefaultBuildHasher> {
     /// JSON null value.
     Null,
@@ -2553,6 +2673,8 @@ pub enum ValueRef<'a, H = DefaultBuildHasher> {
     F64(f64),
     /// JSON string.
     String(&'a str),
+    /// Byte array.
+    Bytes(&'a [u8]),
     /// JSON array, with its sequential order preserved.
     Array(&'a [IValue<H>]),
     /// JSON array, with items in arbitrary order.
@@ -2651,12 +2773,13 @@ mod delta {
         where
             S: Serializer,
         {
-            let mut tuple = serializer.serialize_tuple(7)?;
+            let mut tuple = serializer.serialize_tuple(8)?;
 
             tuple.serialize_element(&self.inner.uint64)?;
             tuple.serialize_element(&self.inner.int64)?;
             tuple.serialize_element(&self.inner.float64)?;
             tuple.serialize_element(&self.inner.string)?;
+            tuple.serialize_element(&self.inner.bytes)?;
 
             let iarray: RawDeltaEncoding<_, IArrayAccumulator<H>> =
                 RawDeltaEncoding::new(&self.inner.iarray);
@@ -2683,6 +2806,7 @@ mod delta {
                 Arena::<i64, i64, H, U32>::SCHEMA,
                 Arena::<Float64, Float64, H, U32>::SCHEMA,
                 ArenaStr::<H, U32>::SCHEMA,
+                ArenaSlice::<u8, H, U32>::SCHEMA,
                 RawDeltaEncoding::<&ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>>::SCHEMA,
                 RawDeltaEncoding::<&ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>>::SCHEMA,
                 RawDeltaEncoding::<
@@ -2701,7 +2825,7 @@ mod delta {
         where
             D: Deserializer<'de>,
         {
-            deserializer.deserialize_tuple(7, DeltaJinternersVisitor(PhantomData))
+            deserializer.deserialize_tuple(8, DeltaJinternersVisitor(PhantomData))
         }
     }
 
@@ -2714,7 +2838,7 @@ mod delta {
         type Value = DeltaEncoding<Jinterners<H>>;
 
         fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-            formatter.write_str("a tuple with 7 elements")
+            formatter.write_str("a tuple with 8 elements")
         }
 
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -2733,14 +2857,17 @@ mod delta {
             let string = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(3, &self))?;
-
-            let iarray: RawDeltaEncoding<ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>> = seq
+            let bytes = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(4, &self))?;
 
-            let iset: RawDeltaEncoding<ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>> = seq
+            let iarray: RawDeltaEncoding<ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>> = seq
                 .next_element()?
                 .ok_or_else(|| A::Error::invalid_length(5, &self))?;
+
+            let iset: RawDeltaEncoding<ArenaSlice<IValue<H>, H, U32>, IArrayAccumulator<H>> = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::invalid_length(6, &self))?;
 
             #[expect(clippy::type_complexity)]
             let iobject: RawDeltaEncoding<
@@ -2748,13 +2875,14 @@ mod delta {
                 IObjectAccumulator<H>,
             > = seq
                 .next_element()?
-                .ok_or_else(|| A::Error::invalid_length(6, &self))?;
+                .ok_or_else(|| A::Error::invalid_length(7, &self))?;
 
             Ok(DeltaEncoding::new(Jinterners {
                 uint64,
                 int64,
                 float64,
                 string,
+                bytes,
                 iarray: iarray.into_inner(),
                 iset: iset.into_inner(),
                 iobject: iobject.into_inner(),
@@ -2775,6 +2903,7 @@ mod delta {
         I64(i32),
         F64(i32),
         String(i32),
+        Bytes(i32),
         Array(i32),
         Set(i32),
         Object(i32),
@@ -2788,6 +2917,7 @@ mod delta {
         i: u32,
         f: u32,
         s: u32,
+        bytes: u32,
         a: u32,
         set: u32,
         o: u32,
@@ -2804,6 +2934,7 @@ mod delta {
                 i: 0,
                 f: 0,
                 s: 0,
+                bytes: 0,
                 a: 0,
                 set: 0,
                 o: 0,
@@ -2861,6 +2992,12 @@ mod delta {
                     let diff = id.wrapping_sub(self.s);
                     self.s = id;
                     IValueDelta::String(diff as i32)
+                }
+                IValueImpl::Bytes(x) => {
+                    let id = x.id().to_usize() as u32;
+                    let diff = id.wrapping_sub(self.bytes);
+                    self.bytes = id;
+                    IValueDelta::Bytes(diff as i32)
                 }
                 IValueImpl::Array(x) => {
                     let id = x.id().to_usize() as u32;
@@ -2920,6 +3057,11 @@ mod delta {
                     let x = self.s.wrapping_add(*x as u32);
                     self.s = x;
                     IValueImpl::String(InternedStr::from_id(U32::from_usize(x as usize)))
+                }
+                IValueDelta::Bytes(x) => {
+                    let x = self.bytes.wrapping_add(*x as u32);
+                    self.bytes = x;
+                    IValueImpl::Bytes(InternedSlice::from_id(U32::from_usize(x as usize)))
                 }
                 IValueDelta::Array(x) => {
                     let x = self.a.wrapping_add(*x as u32);
@@ -3115,7 +3257,7 @@ mod serde_test {
         let ivalue = IValue::from_value(&original, &interners, ArrayOrder::Preserve)
             .expect("Failed to intern value");
 
-        let json = ivalue.lookup(&interners);
+        let json = ivalue.lookup(&interners, BytesPolicy::Reject);
         assert_eq!(
             json,
             json!({
@@ -3152,7 +3294,7 @@ mod serde_test {
         let ivalue = IValue::from_value_mut(&original, &mut interners, ArrayOrder::Preserve)
             .expect("Failed to intern value");
 
-        let json = ivalue.lookup(&interners);
+        let json = ivalue.lookup(&interners, BytesPolicy::Reject);
         assert_eq!(
             json,
             json!({
@@ -3225,7 +3367,7 @@ mod serde_test {
         let ivalue = IValue::from_value(&original, &interners, ArrayOrder::Preserve)
             .expect("Failed to intern value");
 
-        let json = ivalue.lookup(&interners);
+        let json = ivalue.lookup(&interners, BytesPolicy::Reject);
         assert_eq!(
             json,
             json!({
@@ -3255,7 +3397,7 @@ mod serde_test {
         let ivalue = IValue::from_value_mut(&original, &mut interners, ArrayOrder::Preserve)
             .expect("Failed to intern value");
 
-        let json = ivalue.lookup(&interners);
+        let json = ivalue.lookup(&interners, BytesPolicy::Reject);
         assert_eq!(
             json,
             json!({
@@ -3286,7 +3428,7 @@ mod serde_test {
         let ivalue = IValue::from_value(&original, &interners, ArrayOrder::Preserve)
             .expect("Failed to intern value");
 
-        let json = ivalue.lookup(&interners);
+        let json = ivalue.lookup(&interners, BytesPolicy::Reject);
         assert_eq!(
             json,
             json!({
@@ -3316,7 +3458,7 @@ mod serde_test {
         let ivalue = IValue::from_value_mut(&original, &mut interners, ArrayOrder::Preserve)
             .expect("Failed to intern value");
 
-        let json = ivalue.lookup(&interners);
+        let json = ivalue.lookup(&interners, BytesPolicy::Reject);
         assert_eq!(
             json,
             json!({

@@ -13,6 +13,7 @@ pub struct Comparator<'a, H, I> {
     map_float64:
         AdaptiveMap<Interned<Float64, Float64, I, U32>, Interned<Float64, Float64, H, U32>>,
     map_string: AdaptiveMap<InternedStr<I, U32>, InternedStr<H, U32>>,
+    map_bytes: AdaptiveMap<InternedSlice<u8, I, U32>, InternedSlice<u8, H, U32>>,
     map_array: AdaptiveMap<InternedSlice<IValue<I>, I, U32>, InternedSlice<IValue<H>, H, U32>>,
     map_set: AdaptiveMap<InternedSlice<IValue<I>, I, U32>, InternedSlice<IValue<H>, H, U32>>,
     map_object: AdaptiveMap<
@@ -36,6 +37,7 @@ where
             map_int64: AdaptiveMap::new(other_interners.int64.len()),
             map_float64: AdaptiveMap::new(other_interners.float64.len()),
             map_string: AdaptiveMap::new(other_interners.string.strings()),
+            map_bytes: AdaptiveMap::new(other_interners.bytes.slices()),
             map_array: AdaptiveMap::new(other_interners.iarray.slices()),
             map_set: AdaptiveMap::new(other_interners.iset.slices()),
             map_object: AdaptiveMap::new(other_interners.iobject.slices()),
@@ -119,6 +121,17 @@ where
                     }
                 };
                 IValueImpl::String(id)
+            }
+            IValueImpl::Bytes(x) => {
+                let id = match self.map_bytes.get(&x) {
+                    Some(id) => *id,
+                    None => {
+                        let id = self.interners.bytes.find(other.interners.bytes.lookup(x))?;
+                        self.map_bytes.insert(x, id);
+                        id
+                    }
+                };
+                IValueImpl::Bytes(id)
             }
             IValueImpl::Array(x) => {
                 let id = match self.map_array.get(&x) {

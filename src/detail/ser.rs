@@ -101,17 +101,9 @@ where
     }
 
     fn serialize_bytes(self, value: &[u8]) -> Result<Self::Ok, Self::Error> {
-        // TODO: Can we do better?
-        let iter = value
-            .iter()
-            .map(|byte| IValue(IValueImpl::U32((*byte as u32).to_ne_bytes())));
-        // SAFETY: The iterator length is trusted, as it's a simple mapping on a
-        // slice iterator.
-        let index = unsafe { self.interners.iarray.try_intern_iter(iter) };
-        let index = index.ok_or(Error::custom(
-            "Arena<array> is full, cannot push more values to it",
-        ))?;
-        Ok(IValueImpl::Array(index))
+        IValueImpl::try_bytes(self.interners, value).ok_or(Error::custom(
+            "Arena<bytes> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
@@ -787,17 +779,9 @@ where
     }
 
     fn serialize_bytes(self, value: &[u8]) -> Result<Self::Ok, Self::Error> {
-        // TODO: Can we do better?
-        let iter = value
-            .iter()
-            .map(|byte| IValue(IValueImpl::U32((*byte as u32).to_ne_bytes())));
-        // SAFETY: The iterator length is trusted, as it's a simple mapping on a
-        // slice iterator.
-        let index = unsafe { self.interners.iarray.try_intern_iter_mut(iter) };
-        let index = index.ok_or(Error::custom(
-            "Arena<array> is full, cannot push more values to it",
-        ))?;
-        Ok(IValueImpl::Array(index))
+        IValueImpl::try_bytes_mut(self.interners, value).ok_or(Error::custom(
+            "Arena<bytes> is full, cannot push more values to it",
+        ))
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
@@ -1408,6 +1392,11 @@ impl<'a, H> Serialize for BoundValue<'a, H> {
             IValueImpl::String(s) => {
                 serializer.serialize_str(self.interners.string.try_lookup(*s).ok_or(
                     SerError::custom("Interned<string> is out of bounds for this arena"),
+                )?)
+            }
+            IValueImpl::Bytes(b) => {
+                serializer.serialize_bytes(self.interners.bytes.try_lookup(*b).ok_or(
+                    SerError::custom("Interned<bytes> is out of bounds for this arena"),
                 )?)
             }
             IValueImpl::Array(a) => {

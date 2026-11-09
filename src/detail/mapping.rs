@@ -8,6 +8,7 @@ pub struct Mapping {
     pub(crate) int64: ForwardMapping<U32>,
     pub(crate) float64: ForwardMapping<U32>,
     pub(crate) string: ForwardMapping<U32>,
+    pub(crate) bytes: ForwardMapping<U32>,
     pub(crate) iarray: ForwardMapping<U32>,
     pub(crate) iset: ForwardMapping<U32>,
     pub(crate) iobject: ForwardMapping<U32>,
@@ -22,6 +23,7 @@ impl Mapping {
             int64: self.int64,
             float64: self.float64,
             string: self.string,
+            bytes: self.bytes,
             iarray: self.iarray.compose(other.iarray),
             iset: self.iset.compose(other.iset),
             iobject: self.iobject.compose(other.iobject),
@@ -34,6 +36,7 @@ impl Mapping {
             && self.int64.is_identity()
             && self.float64.is_identity()
             && self.string.is_identity()
+            && self.bytes.is_identity()
             && self.iarray.is_identity()
             && self.iset.is_identity()
             && self.iobject.is_identity()
@@ -61,6 +64,12 @@ impl Mapping {
     #[cfg(feature = "debug")]
     pub fn count_remapped_strings(&self) -> usize {
         self.string.count_remapped()
+    }
+
+    /// Returns the number of bytes slices that are remapped by this mapping.
+    #[cfg(feature = "debug")]
+    pub fn count_remapped_byte_slices(&self) -> usize {
+        self.bytes.count_remapped()
     }
 
     /// Returns the number of arrays that are remapped by this mapping.
@@ -97,6 +106,7 @@ impl Mapping {
             IValueImpl::I64(x) => IValueImpl::I64(self.int64.map(x)),
             IValueImpl::F64(x) => IValueImpl::F64(self.float64.map(x)),
             IValueImpl::String(x) => IValueImpl::String(self.string.map_str(x)),
+            IValueImpl::Bytes(x) => IValueImpl::Bytes(self.bytes.map_slice(x)),
             IValueImpl::Array(x) => IValueImpl::Array(self.iarray.map_slice(x)),
             IValueImpl::Set(x) => IValueImpl::Set(self.iset.map_slice(x)),
             IValueImpl::Object(x) => IValueImpl::Object(self.iobject.map_slice(x)),
@@ -111,6 +121,7 @@ pub(crate) struct MappingScalars {
     pub(crate) int64: ForwardMapping<U32>,
     pub(crate) float64: ForwardMapping<U32>,
     pub(crate) string: ForwardMapping<U32>,
+    pub(crate) bytes: ForwardMapping<U32>,
 }
 
 impl MappingScalars {
@@ -120,6 +131,7 @@ impl MappingScalars {
             int64: self.int64,
             float64: self.float64,
             string: self.string,
+            bytes: self.bytes,
             iarray: ForwardMapping::identity(U32::from_usize(num_arrays)),
             iset: ForwardMapping::identity(U32::from_usize(num_sets)),
             iobject: ForwardMapping::identity(U32::from_usize(num_objects)),
@@ -132,6 +144,7 @@ impl MappingScalars {
             && self.int64.is_identity()
             && self.float64.is_identity()
             && self.string.is_identity()
+            && self.bytes.is_identity()
     }
 
     pub fn map_str_key<H>(&self, s: InternedStrKey<H>) -> InternedStrKey<H> {
@@ -150,6 +163,7 @@ impl MappingScalars {
             IValueImpl::I64(x) => IValueImpl::I64(self.int64.map(x)),
             IValueImpl::F64(x) => IValueImpl::F64(self.float64.map(x)),
             IValueImpl::String(x) => IValueImpl::String(self.string.map_str(x)),
+            IValueImpl::Bytes(x) => IValueImpl::Bytes(self.bytes.map_slice(x)),
             IValueImpl::Array(x) => IValueImpl::Array(x),
             IValueImpl::Set(x) => IValueImpl::Set(x),
             IValueImpl::Object(x) => IValueImpl::Object(x),
@@ -172,12 +186,14 @@ impl MappingNoScalars {
         num_int64s: usize,
         num_float64s: usize,
         num_strings: usize,
+        num_byte_slices: usize,
     ) -> Mapping {
         Mapping {
             uint64: ForwardMapping::identity(U32::from_usize(num_uint64s)),
             int64: ForwardMapping::identity(U32::from_usize(num_int64s)),
             float64: ForwardMapping::identity(U32::from_usize(num_float64s)),
             string: ForwardMapping::identity(U32::from_usize(num_strings)),
+            bytes: ForwardMapping::identity(U32::from_usize(num_byte_slices)),
             iarray: self.iarray,
             iset: self.iset,
             iobject: self.iobject,
@@ -201,6 +217,7 @@ impl MappingNoScalars {
             IValueImpl::I64(x) => IValueImpl::I64(x),
             IValueImpl::F64(x) => IValueImpl::F64(x),
             IValueImpl::String(x) => IValueImpl::String(x),
+            IValueImpl::Bytes(x) => IValueImpl::Bytes(x),
             IValueImpl::Array(x) => IValueImpl::Array(self.iarray.map_slice(x)),
             IValueImpl::Set(x) => IValueImpl::Set(self.iset.map_slice(x)),
             IValueImpl::Object(x) => IValueImpl::Object(self.iobject.map_slice(x)),

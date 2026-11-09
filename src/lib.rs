@@ -45,7 +45,9 @@ pub use detail::InterningDeserializer;
 pub use detail::InterningDeserializerMut;
 pub use detail::mapping::Mapping;
 use detail::mapping::{MappingNoScalars, MappingScalars};
-pub use detail::{ArrayOrder, BoundValue, BoundValueMut, IValue, InternedStrKey, MapRef, ValueRef};
+pub use detail::{
+    ArrayOrder, BoundValue, BoundValueMut, BytesPolicy, IValue, InternedStrKey, MapRef, ValueRef,
+};
 #[cfg(feature = "get-size2")]
 use get_size2::{GetSize, GetSizeTracker};
 #[cfg(feature = "postcard-schema")]
@@ -68,6 +70,7 @@ pub struct Jinterners<H = DefaultBuildHasher> {
     int64: Arena<i64, i64, H, U32>,
     float64: Arena<Float64, Float64, H, U32>,
     string: ArenaStr<H, U32>,
+    bytes: ArenaSlice<u8, H, U32>,
     iarray: ArenaSlice<IValue<H>, H, U32>,
     iset: ArenaSlice<IValue<H>, H, U32>,
     iobject: ArenaSlice<(InternedStrKey<H>, IValue<H>), H, U32>,
@@ -83,6 +86,7 @@ where
             int64: Default::default(),
             float64: Default::default(),
             string: Default::default(),
+            bytes: Default::default(),
             iarray: Default::default(),
             iset: Default::default(),
             iobject: Default::default(),
@@ -97,6 +101,7 @@ impl<H> Debug for Jinterners<H> {
             .field("int64", &self.int64)
             .field("float64", &self.float64)
             .field("string", &self.string)
+            .field("bytes", &self.bytes)
             .field("iarray", &self.iarray)
             .field("iset", &self.iset)
             .field("iobject", &self.iobject)
@@ -114,6 +119,7 @@ where
             int64: self.int64.clone(),
             float64: self.float64.clone(),
             string: self.string.clone(),
+            bytes: self.bytes.clone(),
             iarray: self.iarray.clone(),
             iset: self.iset.clone(),
             iobject: self.iobject.clone(),
@@ -127,6 +133,7 @@ impl<H> PartialEq for Jinterners<H> {
             && self.int64 == other.int64
             && self.float64 == other.float64
             && self.string == other.string
+            && self.bytes == other.bytes
             && self.iarray == other.iarray
             && self.iset == other.iset
             && self.iobject == other.iobject
@@ -142,6 +149,7 @@ impl<H> GetSize for Jinterners<H> {
         let (size_int64, tracker) = GetSize::get_heap_size_with_tracker(&self.int64, tracker);
         let (size_float64, tracker) = GetSize::get_heap_size_with_tracker(&self.float64, tracker);
         let (size_string, tracker) = GetSize::get_heap_size_with_tracker(&self.string, tracker);
+        let (size_bytes, tracker) = GetSize::get_heap_size_with_tracker(&self.bytes, tracker);
         let (size_iarray, tracker) = GetSize::get_heap_size_with_tracker(&self.iarray, tracker);
         let (size_iset, tracker) = GetSize::get_heap_size_with_tracker(&self.iset, tracker);
         let (size_iobject, tracker) = GetSize::get_heap_size_with_tracker(&self.iobject, tracker);
@@ -150,6 +158,7 @@ impl<H> GetSize for Jinterners<H> {
                 + size_int64
                 + size_float64
                 + size_string
+                + size_bytes
                 + size_iarray
                 + size_iset
                 + size_iobject,
@@ -169,6 +178,7 @@ impl<H> Serialize for Jinterners<H> {
             &self.int64,
             &self.float64,
             &self.string,
+            &self.bytes,
             &self.iarray,
             &self.iset,
             &self.iobject,
@@ -186,6 +196,7 @@ impl<H> Schema for Jinterners<H> {
             Arena::<i64, i64, H, U32>::SCHEMA,
             Arena::<Float64, Float64, H, U32>::SCHEMA,
             ArenaStr::<H, U32>::SCHEMA,
+            ArenaSlice::<u8, H, U32>::SCHEMA,
             ArenaSlice::<IValue<H>, H, U32>::SCHEMA,
             ArenaSlice::<IValue<H>, H, U32>::SCHEMA,
             ArenaSlice::<(InternedStrKey<H>, IValue<H>), H, U32>::SCHEMA,
@@ -202,13 +213,14 @@ where
     where
         D: Deserializer<'de>,
     {
-        let (uint64, int64, float64, string, iarray, iset, iobject) =
+        let (uint64, int64, float64, string, bytes, iarray, iset, iobject) =
             Deserialize::deserialize(deserializer)?;
         Ok(Self {
             uint64,
             int64,
             float64,
             string,
+            bytes,
             iarray,
             iset,
             iobject,
@@ -236,6 +248,11 @@ impl<H> Jinterners<H> {
     /// Gets the size in bytes of the underlying string arena.
     pub fn get_size_strings(&self) -> usize {
         self.string.get_size()
+    }
+
+    /// Gets the size in bytes of the underlying bytes arena.
+    pub fn get_size_bytes_slices(&self) -> usize {
+        self.bytes.get_size()
     }
 
     /// Gets the size in bytes of the underlying array arena.
@@ -280,6 +297,12 @@ impl<H> Jinterners<H> {
         self.string.print_summary(prefix, title, total_bytes);
     }
 
+    /// Prints a summary of the storage used by the underlying bytes arena to
+    /// stdout.
+    pub fn print_summary_bytes(&self, prefix: &str, title: &str, total_bytes: usize) {
+        self.bytes.print_summary(prefix, title, total_bytes);
+    }
+
     /// Prints a summary of the storage used by the underlying array arena to
     /// stdout.
     pub fn print_summary_arrays(&self, prefix: &str, title: &str, total_bytes: usize) {
@@ -314,6 +337,10 @@ pub struct Stats {
     pub strings: usize,
     /// Number of string bytes in the arena.
     pub string_bytes: usize,
+    /// Number of byte slices in the arena.
+    pub byte_slices: usize,
+    /// Number of byte slice bytes in the arena.
+    pub byte_slice_bytes: usize,
     /// Number of arrays in the arena.
     pub arrays: usize,
     /// Number of array items in the arena.
@@ -341,6 +368,8 @@ impl<H> Jinterners<H> {
             f64s: self.float64.len(),
             strings: self.string.strings(),
             string_bytes: self.string.bytes(),
+            byte_slices: self.bytes.slices(),
+            byte_slice_bytes: self.bytes.items(),
             arrays: self.iarray.slices(),
             array_items: self.iarray.items(),
             sets: self.iset.slices(),
@@ -363,6 +392,7 @@ impl<H> Jinterners<H> {
             int64: self.int64.snapshot(),
             float64: self.float64.snapshot(),
             string: self.string.snapshot(),
+            bytes: self.bytes.snapshot(),
             iarray: self.iarray.snapshot(),
             iset: self.iset.snapshot(),
             iobject: self.iobject.snapshot(),
@@ -464,8 +494,8 @@ where
     /// arena, for example because the arena was truncated, or because the
     /// interned value was deserialized from untrusted data. Use
     /// [`try_lookup()`](Self::try_lookup) for a fallible API.
-    pub fn lookup(&self, value: &IValue<H>) -> Value {
-        value.lookup(self)
+    pub fn lookup(&self, value: &IValue<H>, bytes_policy: BytesPolicy) -> Value {
+        value.lookup(self, bytes_policy)
     }
 
     /// Retrieves the given interned value from this arena.
@@ -479,8 +509,8 @@ where
     ///
     /// See also [`try_lookup_ref()`](Self::try_lookup_ref) if you only need a
     /// shallow view.
-    pub fn try_lookup(&self, value: &IValue<H>) -> Option<Value> {
-        value.try_lookup(self)
+    pub fn try_lookup(&self, value: &IValue<H>, bytes_policy: BytesPolicy) -> Option<Value> {
+        value.try_lookup(self, bytes_policy)
     }
 
     /// Retrieves the given interned value from this arena.
@@ -645,6 +675,7 @@ where
         self.int64.truncate(snapshot.int64);
         self.float64.truncate(snapshot.float64);
         self.string.truncate(snapshot.string);
+        self.bytes.truncate(snapshot.bytes);
         self.iarray.truncate(snapshot.iarray);
         self.iset.truncate(snapshot.iset);
         self.iobject.truncate(snapshot.iobject);
@@ -692,11 +723,13 @@ where
                         let int64 = self.int64.clone();
                         let float64 = self.float64.clone();
                         let string = self.string.clone();
+                        let bytes = self.bytes.clone();
 
                         let num_uint64s = uint64.len();
                         let num_int64s = int64.len();
                         let num_float64s = float64.len();
                         let num_strings = string.strings();
+                        let num_bytes = bytes.slices();
 
                         (
                             Jinterners {
@@ -704,11 +737,18 @@ where
                                 int64,
                                 float64,
                                 string,
+                                bytes,
                                 iarray,
                                 iset,
                                 iobject,
                             },
-                            mapping_opt.promote(num_uint64s, num_int64s, num_float64s, num_strings),
+                            mapping_opt.promote(
+                                num_uint64s,
+                                num_int64s,
+                                num_float64s,
+                                num_strings,
+                                num_bytes,
+                            ),
                         )
                     }
                     Some((mut jinterners, mapping)) => {
@@ -739,6 +779,7 @@ where
         let i64_map = self.int64.sort();
         let f64_map = self.float64.sort();
         let string_map = self.string.sort();
+        let bytes_map = self.bytes.sort();
         let iarray_map = self.iarray.sort();
         let iset_map = self.iset.sort();
         let iobject_map = self.iobject.sort();
@@ -748,6 +789,7 @@ where
             int64: i64_map.forward,
             float64: f64_map.forward,
             string: string_map.forward,
+            bytes: bytes_map.forward,
             iarray: iarray_map.forward,
             iset: iset_map.forward,
             iobject: iobject_map.forward,
@@ -764,6 +806,7 @@ where
             int64: self.int64.map(&i64_map.reverse),
             float64: self.float64.map(&f64_map.reverse),
             string: self.string.map(&string_map.reverse),
+            bytes: self.bytes.map(&bytes_map.reverse),
             iarray: self
                 .iarray
                 .map2(&iarray_map.reverse, |ivalue| mapping.map(*ivalue)),
@@ -801,12 +844,14 @@ where
         let i64_map = self.int64.sort();
         let f64_map = self.float64.sort();
         let string_map = self.string.sort();
+        let bytes_map = self.bytes.sort();
 
         let mapping = MappingScalars {
             uint64: u64_map.forward,
             int64: i64_map.forward,
             float64: f64_map.forward,
             string: string_map.forward,
+            bytes: bytes_map.forward,
         };
 
         if mapping.is_identity() {
@@ -822,6 +867,7 @@ where
             int64: self.int64.map(&i64_map.reverse),
             float64: self.float64.map(&f64_map.reverse),
             string: self.string.map(&string_map.reverse),
+            bytes: self.bytes.map(&bytes_map.reverse),
             iarray: ArenaSlice::with_capacity(iarray_iter.len(), self.iarray.items()),
             iset: ArenaSlice::with_capacity(iset_iter.len(), self.iset.items()),
             iobject: ArenaSlice::with_capacity(iobject_iter.len(), self.iobject.items()),
@@ -932,6 +978,7 @@ impl<H> Jinterners<H> {
             i64s: self.int64.retain_builder(),
             f64s: self.float64.retain_builder(),
             strings: self.string.retain_builder(),
+            bytes: self.bytes.retain_builder(),
             arrays: self.iarray.retain_builder(),
             sets: self.iset.retain_builder(),
             objects: self.iobject.retain_builder(),
@@ -954,6 +1001,7 @@ pub struct RetainBuilder<'a, H = DefaultBuildHasher> {
     i64s: RetainItemBuilder<i64, i64, H, U32>,
     f64s: RetainItemBuilder<Float64, Float64, H, U32>,
     strings: RetainStrBuilder<H, U32>,
+    bytes: RetainSliceBuilder<u8, H, U32>,
     arrays: RetainSliceBuilder<IValue<H>, H, U32>,
     sets: RetainSliceBuilder<IValue<H>, H, U32>,
     objects: RetainSliceBuilder<(InternedStrKey<H>, IValue<H>), H, U32>,
@@ -1012,6 +1060,7 @@ where
         let i64_map = self.i64s.build();
         let f64_map = self.f64s.build();
         let string_map = self.strings.build();
+        let bytes_map = self.bytes.build();
         let iarray_map = self.arrays.build();
         let iset_map = self.sets.build();
         let iobject_map = self.objects.build();
@@ -1021,6 +1070,7 @@ where
             int64: i64_map.forward,
             float64: f64_map.forward,
             string: string_map.forward,
+            bytes: bytes_map.forward,
             iarray: iarray_map.forward,
             iset: iset_map.forward,
             iobject: iobject_map.forward,
@@ -1034,6 +1084,7 @@ where
             int64: self.jinterners.int64.map(&i64_map.reverse),
             float64: self.jinterners.float64.map(&f64_map.reverse),
             string: self.jinterners.string.map(&string_map.reverse),
+            bytes: self.jinterners.bytes.map(&bytes_map.reverse),
             iarray: self
                 .jinterners
                 .iarray
@@ -1066,6 +1117,7 @@ pub struct SnapshotMark<H = DefaultBuildHasher> {
     int64: SnapshotItemMark<i64, i64, H, U32>,
     float64: SnapshotItemMark<Float64, Float64, H, U32>,
     string: SnapshotStrMark<H, U32>,
+    bytes: SnapshotSliceMark<u8, H, U32>,
     iarray: SnapshotSliceMark<IValue<H>, H, U32>,
     iset: SnapshotSliceMark<IValue<H>, H, U32>,
     iobject: SnapshotSliceMark<(InternedStrKey<H>, IValue<H>), H, U32>,
@@ -1078,6 +1130,7 @@ impl<H> Default for SnapshotMark<H> {
             int64: Default::default(),
             float64: Default::default(),
             string: Default::default(),
+            bytes: Default::default(),
             iarray: Default::default(),
             iset: Default::default(),
             iobject: Default::default(),
@@ -1102,6 +1155,7 @@ pub struct Snapshot<'a, H = DefaultBuildHasher> {
     int64: SnapshotItem<'a, i64, i64, H, U32>,
     float64: SnapshotItem<'a, Float64, Float64, H, U32>,
     string: SnapshotStr<'a, H, U32>,
+    bytes: SnapshotSlice<'a, u8, H, U32>,
     iarray: SnapshotSlice<'a, IValue<H>, H, U32>,
     iset: SnapshotSlice<'a, IValue<H>, H, U32>,
     iobject: SnapshotSlice<'a, (InternedStrKey<H>, IValue<H>), H, U32>,
@@ -1115,6 +1169,7 @@ impl<H> Snapshot<'_, H> {
             int64: self.int64.mark(),
             float64: self.float64.mark(),
             string: self.string.mark(),
+            bytes: self.bytes.mark(),
             iarray: self.iarray.mark(),
             iset: self.iset.mark(),
             iobject: self.iobject.mark(),
@@ -1129,6 +1184,7 @@ impl<H> Snapshot<'_, H> {
             int64: self.int64.diff(start.int64),
             float64: self.float64.diff(start.float64),
             string: self.string.diff(start.string),
+            bytes: self.bytes.diff(start.bytes),
             iarray: self.iarray.diff(start.iarray),
             iset: self.iset.diff(start.iset),
             iobject: self.iobject.diff(start.iobject),
@@ -1146,6 +1202,7 @@ pub struct SnapshotDiff<'a, H = DefaultBuildHasher> {
     int64: SnapshotItemDiff<'a, i64, i64, H, U32>,
     float64: SnapshotItemDiff<'a, Float64, Float64, H, U32>,
     string: SnapshotStrDiff<'a, H, U32>,
+    bytes: SnapshotSliceDiff<'a, u8, H, U32>,
     iarray: SnapshotSliceDiff<'a, IValue<H>, H, U32>,
     iset: SnapshotSliceDiff<'a, IValue<H>, H, U32>,
     iobject: SnapshotSliceDiff<'a, (InternedStrKey<H>, IValue<H>), H, U32>,
@@ -1162,6 +1219,7 @@ impl<H> Serialize for SnapshotDiff<'_, H> {
             &self.int64,
             &self.float64,
             &self.string,
+            &self.bytes,
             &self.iarray,
             &self.iset,
             &self.iobject,
@@ -1179,6 +1237,7 @@ impl<H> Schema for SnapshotDiff<'_, H> {
             SnapshotItemDiff::<'_, i64, i64, H, U32>::SCHEMA,
             SnapshotItemDiff::<'_, Float64, Float64, H, U32>::SCHEMA,
             SnapshotStrDiff::<'_, H, U32>::SCHEMA,
+            SnapshotSliceDiff::<'_, u8, H, U32>::SCHEMA,
             SnapshotSliceDiff::<'_, IValue<H>, H, U32>::SCHEMA,
             SnapshotSliceDiff::<'_, IValue<H>, H, U32>::SCHEMA,
             SnapshotSliceDiff::<'_, (InternedStrKey<H>, IValue<H>), H, U32>::SCHEMA,
@@ -1213,7 +1272,7 @@ where
         D: Deserializer<'de>,
     {
         deserializer.deserialize_tuple(
-            7,
+            8,
             ExtendJinternersVisitor {
                 interners: self.interners,
             },
@@ -1234,7 +1293,7 @@ where
     type Value = ();
 
     fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-        formatter.write_str("a tuple with 7 elements")
+        formatter.write_str("a tuple with 8 elements")
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -1249,12 +1308,14 @@ where
             .ok_or_else(|| A::Error::invalid_length(2, &self))?;
         seq.next_element_seed(ExtendArenaStr::new(&mut self.interners.string))?
             .ok_or_else(|| A::Error::invalid_length(3, &self))?;
-        seq.next_element_seed(ExtendArenaSlice::new(&mut self.interners.iarray))?
+        seq.next_element_seed(ExtendArenaSlice::new(&mut self.interners.bytes))?
             .ok_or_else(|| A::Error::invalid_length(4, &self))?;
-        seq.next_element_seed(ExtendArenaSlice::new(&mut self.interners.iset))?
+        seq.next_element_seed(ExtendArenaSlice::new(&mut self.interners.iarray))?
             .ok_or_else(|| A::Error::invalid_length(5, &self))?;
-        seq.next_element_seed(ExtendArenaSlice::new(&mut self.interners.iobject))?
+        seq.next_element_seed(ExtendArenaSlice::new(&mut self.interners.iset))?
             .ok_or_else(|| A::Error::invalid_length(6, &self))?;
+        seq.next_element_seed(ExtendArenaSlice::new(&mut self.interners.iobject))?
+            .ok_or_else(|| A::Error::invalid_length(7, &self))?;
         Ok(())
     }
 }
@@ -1338,6 +1399,16 @@ mod test {
                     }),
                 },
                 &NamedVariant {
+                    name: "Bytes",
+                    ty: &DataModelVariant::NewtypeVariant(&NamedType {
+                        name: "InternedSlice",
+                        ty: &DataModelType::NewtypeStruct(&NamedType {
+                            name: "U32",
+                            ty: &DataModelType::Usize,
+                        }),
+                    }),
+                },
+                &NamedVariant {
                     name: "Array",
                     ty: &DataModelVariant::NewtypeVariant(&NamedType {
                         name: "InternedSlice",
@@ -1409,6 +1480,25 @@ mod test {
                             &NamedType {
                                 name: "",
                                 ty: &DataModelType::String
+                            }
+                        ])
+                    },
+                    &NamedType {
+                        name: "ArenaSlice",
+                        ty: &DataModelType::Tuple(&[
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "U32",
+                                    ty: &DataModelType::Usize
+                                })
+                            },
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "u8",
+                                    ty: &DataModelType::U8,
+                                })
                             }
                         ])
                     },
@@ -1531,6 +1621,25 @@ mod test {
                             },
                             &NamedType {
                                 name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "u8",
+                                    ty: &DataModelType::U8
+                                })
+                            }
+                        ])
+                    },
+                    &NamedType {
+                        name: "SnapshotSliceDiff",
+                        ty: &DataModelType::Tuple(&[
+                            &NamedType {
+                                name: "",
+                                ty: &DataModelType::Seq(&NamedType {
+                                    name: "U32",
+                                    ty: &DataModelType::Usize
+                                })
+                            },
+                            &NamedType {
+                                name: "",
                                 ty: &DataModelType::Seq(IVALUE_SCHEMA)
                             }
                         ])
@@ -1615,7 +1724,7 @@ mod test {
         );
 
         assert_eq!(
-            interners.lookup(&mary),
+            interners.lookup(&mary, BytesPolicy::Reject),
             json!({
                 "name": "Mary",
                 "surname": "Smith",
@@ -1634,7 +1743,7 @@ mod test {
         let mapped_john = mapping.map(john);
 
         assert_eq!(
-            filtered.lookup(&mapped_john),
+            filtered.lookup(&mapped_john, BytesPolicy::Reject),
             json!({
                 "name": "John",
                 "surname": "Doe",
@@ -1660,9 +1769,9 @@ mod test {
         // Optimization sorts strings.
         let (interners, mapping) = interners.optimize(None).unwrap();
         let mary = mapping.map(mary);
-        assert_eq!(interners.lookup(&mary), json!("Mary"));
+        assert_eq!(interners.lookup(&mary, BytesPolicy::Reject), json!("Mary"));
         let john = mapping.map(john);
-        assert_eq!(interners.lookup(&john), json!("John"));
+        assert_eq!(interners.lookup(&john, BytesPolicy::Reject), json!("John"));
 
         // Optimizing a second time is a no-op.
         assert!(interners.optimize(None).is_none());
@@ -1678,9 +1787,9 @@ mod test {
         // Optimization sorts strings.
         let (interners, mapping) = interners.optimize_once().unwrap();
         let mary = mapping.map(mary);
-        assert_eq!(interners.lookup(&mary), json!("Mary"));
+        assert_eq!(interners.lookup(&mary, BytesPolicy::Reject), json!("Mary"));
         let john = mapping.map(john);
-        assert_eq!(interners.lookup(&john), json!("John"));
+        assert_eq!(interners.lookup(&john, BytesPolicy::Reject), json!("John"));
 
         // Optimizing a second time is a no-op when the interner only contains
         // strings.
@@ -1720,7 +1829,7 @@ mod test {
 
         interners.truncate(snapshot);
         assert_eq!(
-            interners.lookup(&john),
+            interners.lookup(&john, BytesPolicy::Reject),
             json!({
             "name": "John",
             "surname": "Doe",

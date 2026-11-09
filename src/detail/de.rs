@@ -4,11 +4,11 @@ use alloc::format;
 use alloc::string::String;
 use blazinterner::{DefaultBuildHasher, InternedSlice, InternedStr, U32};
 use core::hash::BuildHasher;
+use serde::Deserializer;
 use serde::de::{
     DeserializeSeed, EnumAccess, Error, Expected, MapAccess, SeqAccess, Unexpected, VariantAccess,
     Visitor,
 };
-use serde::{Deserializer, forward_to_deserialize_any};
 use serde_json::error::Error as JsonError;
 
 fn deserialize_array<'de, V, H>(
@@ -153,6 +153,9 @@ impl<'de, H> ValueDeserializer<'_, 'de, H> {
             IValueImpl::String(s) => {
                 Unexpected::Str(self.interners.string.try_lookup(*s).unwrap_or_default())
             }
+            IValueImpl::Bytes(b) => {
+                Unexpected::Bytes(self.interners.bytes.try_lookup(*b).unwrap_or_default())
+            }
             IValueImpl::Array(_) => Unexpected::Seq,
             IValueImpl::Set(_) => Unexpected::Seq,
             IValueImpl::Object(_) => Unexpected::Map,
@@ -235,6 +238,11 @@ impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
             IValueImpl::String(s) => {
                 visitor.visit_borrowed_str(self.interners.string.try_lookup(*s).ok_or(
                     Error::custom("Interned<string> is out of bounds for this arena"),
+                )?)
+            }
+            IValueImpl::Bytes(b) => {
+                visitor.visit_borrowed_bytes(self.interners.bytes.try_lookup(*b).ok_or(
+                    Error::custom("Interned<bytes> is out of bounds for this arena"),
                 )?)
             }
             IValueImpl::Array(a) => deserialize_array(visitor, *a, self.interners),
@@ -363,6 +371,27 @@ impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
         V: Visitor<'de>,
     {
         self.deserialize_str(visitor)
+    }
+
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        match self.value {
+            IValueImpl::Bytes(b) => {
+                visitor.visit_borrowed_bytes(self.interners.bytes.try_lookup(*b).ok_or(
+                    Error::custom("Interned<bytes> is out of bounds for this arena"),
+                )?)
+            }
+            _ => Err(self.invalid_type(&visitor)),
+        }
+    }
+
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_bytes(visitor)
     }
 
     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -519,10 +548,6 @@ impl<'de, H> Deserializer<'de> for ValueDeserializer<'_, 'de, H> {
         V: Visitor<'de>,
     {
         visitor.visit_unit()
-    }
-
-    forward_to_deserialize_any! {
-        bytes byte_buf
     }
 }
 
@@ -1251,6 +1276,15 @@ where
         ))
     }
 
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        IValueImpl::try_bytes_mut(self.interners, v).ok_or(Error::custom(
+            "Arena<bytes> is full, cannot push more values to it",
+        ))
+    }
+
     fn visit_none<E>(self) -> Result<Self::Value, E>
     where
         E: Error,
@@ -1670,6 +1704,15 @@ pub mod sync {
         {
             IValueImpl::try_string(self.interners, v).ok_or(Error::custom(
                 "Arena<string> is full, cannot push more values to it",
+            ))
+        }
+
+        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            IValueImpl::try_bytes(self.interners, v).ok_or(Error::custom(
+                "Arena<bytes> is full, cannot push more values to it",
             ))
         }
 
