@@ -18,6 +18,16 @@ fn extract_filename(path: &mut PathBuf) -> Result<&str> {
     .with_context(|| format!("Failed to convert path to string for {path:?}"))
 }
 
+fn check_expected_file(serialized: &[u8], expected_path: &str) -> Result<()> {
+    let mut f = File::open(expected_path)
+        .with_context(|| format!("Failed to read file {expected_path}"))?;
+    let mut expected = Vec::new();
+    f.read_to_end(&mut expected)
+        .with_context(|| format!("Failed to read file {expected_path}"))?;
+    assert_eq!(serialized, expected);
+    Ok(())
+}
+
 #[rstest]
 fn test_intern(#[files("data/**/*.json")] mut path: PathBuf) -> Result<()> {
     let name = extract_filename(&mut path)?;
@@ -33,14 +43,7 @@ fn test_intern(#[files("data/**/*.json")] mut path: PathBuf) -> Result<()> {
     let serialized = postcard::to_stdvec(&InternedFile { jinterners, ivalue })
         .with_context(|| format!("Failed to serialize {name} as postcard"))?;
 
-    let mut f = File::open(format!("data/{name}.postcard"))
-        .with_context(|| format!("Failed to read file data/{name}.postcard"))?;
-    let mut expected = Vec::new();
-    f.read_to_end(&mut expected)
-        .with_context(|| format!("Failed to read file data/{name}.postcard"))?;
-    assert_eq!(serialized, expected);
-
-    Ok(())
+    check_expected_file(&serialized, &format!("data/{name}.postcard"))
 }
 
 #[rstest]
@@ -92,14 +95,7 @@ fn test_optimize(#[files("data/**/*.json")] mut path: PathBuf) -> Result<()> {
     let serialized = postcard::to_stdvec(&InternedFile { jinterners, ivalue })
         .with_context(|| format!("Failed to serialize {name} as postcard"))?;
 
-    let mut f = File::open(format!("data/{name}.opt.postcard"))
-        .with_context(|| format!("Failed to read file data/{name}.opt.postcard"))?;
-    let mut expected = Vec::new();
-    f.read_to_end(&mut expected)
-        .with_context(|| format!("Failed to read file data/{name}.opt.postcard"))?;
-    assert_eq!(serialized, expected);
-
-    Ok(())
+    check_expected_file(&serialized, &format!("data/{name}.opt.postcard"))
 }
 
 #[rstest]
@@ -117,14 +113,7 @@ fn test_intern_unordered_arrays(#[files("data/**/*.json")] mut path: PathBuf) ->
     let serialized = postcard::to_stdvec(&InternedFile { jinterners, ivalue })
         .with_context(|| format!("Failed to serialize {name} as postcard"))?;
 
-    let mut f = File::open(format!("data/{name}.sets.postcard"))
-        .with_context(|| format!("Failed to read file data/{name}.sets.postcard"))?;
-    let mut expected = Vec::new();
-    f.read_to_end(&mut expected)
-        .with_context(|| format!("Failed to read file data/{name}.sets.postcard"))?;
-    assert_eq!(serialized, expected);
-
-    Ok(())
+    check_expected_file(&serialized, &format!("data/{name}.sets.postcard"))
 }
 
 #[rstest]
@@ -178,14 +167,7 @@ fn test_optimize_unordered_arrays(#[files("data/**/*.json")] mut path: PathBuf) 
     let serialized = postcard::to_stdvec(&InternedFile { jinterners, ivalue })
         .with_context(|| format!("Failed to serialize {name} as postcard"))?;
 
-    let mut f = File::open(format!("data/{name}.sets.opt.postcard"))
-        .with_context(|| format!("Failed to read file data/{name}.sets.opt.postcard"))?;
-    let mut expected = Vec::new();
-    f.read_to_end(&mut expected)
-        .with_context(|| format!("Failed to read file data/{name}.sets.opt.postcard"))?;
-    assert_eq!(serialized, expected);
-
-    Ok(())
+    check_expected_file(&serialized, &format!("data/{name}.sets.opt.postcard"))
 }
 
 #[derive(Serialize)]
