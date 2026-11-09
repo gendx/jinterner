@@ -38,6 +38,8 @@ use core::fmt::Debug;
 use core::hash::BuildHasher;
 #[cfg(feature = "delta")]
 pub use delta::DeltaEncoding;
+#[cfg(feature = "base64")]
+pub use detail::Base64Alphabet;
 use detail::Float64;
 #[cfg(all(feature = "serde", feature = "sync"))]
 pub use detail::InterningDeserializer;

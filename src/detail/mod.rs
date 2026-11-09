@@ -87,6 +87,7 @@ pub enum BytesPolicy {
     Base64(Base64Alphabet),
 }
 
+/// Base 64 alphabet.
 #[cfg(feature = "base64")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Base64Alphabet {
