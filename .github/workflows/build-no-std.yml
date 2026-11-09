@@ -23,12 +23,16 @@ jobs:
       - name: Build (no default features)
         run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features
 
+      - name: Build (base64 feature)
+        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=base64
       - name: Build (debug feature)
         run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=debug
       - name: Build (delta feature)
         run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=delta
       - name: Build (get-size2 feature)
         run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=get-size2
+      - name: Build (hex feature)
+        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=hex
       - name: Build (postcard-schema feature)
         run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=postcard-schema
       - name: Build (retain feature)
@@ -37,4 +41,4 @@ jobs:
         run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=serde
 
       - name: Build (all no-std features)
-        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=debug,delta,get-size2,postcard-schema,retain,serde
+        run: cargo build --target x86_64-unknown-none --verbose --all --no-default-features --features=base64,debug,delta,get-size2,hex,postcard-schema,retain,serde

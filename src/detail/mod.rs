@@ -16,6 +16,11 @@ use alloc::boxed::Box;
 use alloc::string::String;
 #[cfg(feature = "serde")]
 use alloc::vec::Vec;
+#[cfg(feature = "base64")]
+use base64::engine::{
+    Engine,
+    general_purpose::{STANDARD, URL_SAFE},
+};
 use blazinterner::{
     ArenaStr, DefaultBuildHasher, Index, Interned, InternedSlice, InternedStr, U32,
 };
@@ -67,12 +72,28 @@ pub enum ArrayOrder {
 /// Configuration to indicate how to treat byte arrays when converting them to
 /// JSON values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive] // Don't let the enum be exhaustive as some variants are cfg'ed.
 pub enum BytesPolicy {
     /// Reject byte arrays and fail the conversion.
     Reject,
     /// Treat byte arrays as strings if they are valid UTF-8, and fail the
     /// conversion otherwise.
     TryUtf8,
+    /// Encode byte arrays as hexadecimal.
+    #[cfg(feature = "hex")]
+    Hex,
+    /// Encode byte arrays as base64.
+    #[cfg(feature = "base64")]
+    Base64(Base64Alphabet),
+}
+
+#[cfg(feature = "base64")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Base64Alphabet {
+    /// The standard base64 alphabet.
+    Standard,
+    /// The URL-safe base64 alphabet.
+    UrlSafe,
 }
 
 /// An [`IValue`] interned value together with a reference to the associated
@@ -2598,6 +2619,16 @@ where
                 BytesPolicy::TryUtf8 => {
                     str::from_utf8(interners.bytes.try_lookup(*b)?).ok()?.into()
                 }
+                #[cfg(feature = "hex")]
+                BytesPolicy::Hex => hex::encode(interners.bytes.try_lookup(*b)?),
+                #[cfg(feature = "base64")]
+                BytesPolicy::Base64(alphabet) => {
+                    let bytes = interners.bytes.try_lookup(*b)?;
+                    match alphabet {
+                        Base64Alphabet::Standard => STANDARD.encode(bytes),
+                        Base64Alphabet::UrlSafe => URL_SAFE.encode(bytes),
+                    }
+                }
             }),
             IValueImpl::Array(a) => Value::Array(
                 interners
@@ -3486,6 +3517,72 @@ mod serde_test {
         assert_eq!(
             json.unwrap(),
             r#"{"a":true,"b":-305419896,"c":18364758544493064720,"d":3.1415927410125732,"e":2.718281828459045,"f":"Hello world","g":["First",{"Second":[2271560481,-1311768467463790320]},{"Third":{"i":"Hello","j":[1,2,3,4]}}],"h":{"Hello":"First","world":{"Second":[42,-123]}}}"#
+        );
+    }
+
+    #[test]
+    fn lookup_bytes_reject() {
+        let mut interners: Jinterners = Jinterners::default();
+
+        let ivalue = IValue::bytes_mut(&mut interners, b"Hello world");
+        assert_eq!(ivalue.try_lookup(&interners, BytesPolicy::Reject), None);
+    }
+
+    #[test]
+    fn lookup_bytes_utf8() {
+        let mut interners: Jinterners = Jinterners::default();
+
+        let ivalue = IValue::bytes_mut(&mut interners, b"Hello world");
+        assert_eq!(
+            ivalue.try_lookup(&interners, BytesPolicy::TryUtf8),
+            Some(Value::String("Hello world".into()))
+        );
+
+        let ivalue = IValue::bytes_mut(&mut interners, &[0xFF, 0xEF]);
+        assert_eq!(ivalue.try_lookup(&interners, BytesPolicy::TryUtf8), None);
+    }
+
+    #[cfg(feature = "hex")]
+    #[test]
+    fn lookup_bytes_hex() {
+        let mut interners: Jinterners = Jinterners::default();
+
+        let ivalue = IValue::bytes_mut(&mut interners, b"Hello world");
+        assert_eq!(
+            ivalue.try_lookup(&interners, BytesPolicy::Hex),
+            Some(Value::String("48656c6c6f20776f726c64".into()))
+        );
+
+        let ivalue = IValue::bytes_mut(&mut interners, &[0xFF, 0xEF]);
+        assert_eq!(
+            ivalue.try_lookup(&interners, BytesPolicy::Hex),
+            Some(Value::String("ffef".into()))
+        );
+    }
+
+    #[cfg(feature = "base64")]
+    #[test]
+    fn lookup_bytes_base64() {
+        let mut interners: Jinterners = Jinterners::default();
+
+        let ivalue = IValue::bytes_mut(&mut interners, b"Hello world");
+        assert_eq!(
+            ivalue.try_lookup(&interners, BytesPolicy::Base64(Base64Alphabet::Standard)),
+            Some(Value::String("SGVsbG8gd29ybGQ=".into()))
+        );
+        assert_eq!(
+            ivalue.try_lookup(&interners, BytesPolicy::Base64(Base64Alphabet::UrlSafe)),
+            Some(Value::String("SGVsbG8gd29ybGQ=".into()))
+        );
+
+        let ivalue = IValue::bytes_mut(&mut interners, &[0xFF, 0xEF]);
+        assert_eq!(
+            ivalue.try_lookup(&interners, BytesPolicy::Base64(Base64Alphabet::Standard)),
+            Some(Value::String("/+8=".into()))
+        );
+        assert_eq!(
+            ivalue.try_lookup(&interners, BytesPolicy::Base64(Base64Alphabet::UrlSafe)),
+            Some(Value::String("_-8=".into()))
         );
     }
 }

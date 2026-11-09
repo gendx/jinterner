@@ -19,16 +19,20 @@ jobs:
       - name: Check Clippy lints (no default features)
         run: cargo clippy --verbose --all --no-default-features
       - name: Check Clippy lints (all features except sync)
-        run: cargo clippy --verbose --all --no-default-features --features=debug,delta,get-size2,postcard-schema,retain,serde,std
+        run: cargo clippy --verbose --all --no-default-features --features=base64,debug,delta,get-size2,hex,postcard-schema,retain,serde,std
       - name: Check Clippy lints (all features)
         run: cargo clippy --verbose --all --all-features
 
+      - name: Check Clippy lints (base64 feature)
+        run: cargo clippy --verbose --all --no-default-features --features=base64
       - name: Check Clippy lints (debug feature)
         run: cargo clippy --verbose --all --no-default-features --features=debug
       - name: Check Clippy lints (delta feature)
         run: cargo clippy --verbose --all --no-default-features --features=delta
       - name: Check Clippy lints (get-size2 feature)
         run: cargo clippy --verbose --all --no-default-features --features=get-size2
+      - name: Check Clippy lints (hex feature)
+        run: cargo clippy --verbose --all --no-default-features --features=hex
       - name: Check Clippy lints (postcard-schema feature)
         run: cargo clippy --verbose --all --no-default-features --features=postcard-schema
       - name: Check Clippy lints (retain feature)
@@ -45,7 +49,7 @@ jobs:
       - name: Check Clippy lints on tests (no default features)
         run: cargo clippy --verbose --all --tests --no-default-features
       - name: Check Clippy lints on tests (all features except sync)
-        run: cargo clippy --verbose --all --tests --no-default-features --features=debug,delta,get-size2,postcard-schema,retain,serde,std
+        run: cargo clippy --verbose --all --tests --no-default-features --features=base64,debug,delta,get-size2,hex,postcard-schema,retain,serde,std
       - name: Check Clippy lints on tests (all features)
         run: cargo clippy --verbose --all --tests --all-features
 
@@ -54,7 +58,7 @@ jobs:
       - name: Check Clippy lints on benchmarks (no default features)
         run: cargo clippy --verbose --all --benches --no-default-features
       - name: Check Clippy lints on benchmarks (all features except sync)
-        run: cargo clippy --verbose --all --benches --no-default-features --features=debug,delta,get-size2,postcard-schema,retain,serde,std
+        run: cargo clippy --verbose --all --benches --no-default-features --features=base64,debug,delta,get-size2,hex,postcard-schema,retain,serde,std
       - name: Check Clippy lints on benchmarks (all features)
         run: cargo clippy --verbose --all --benches --all-features
 
@@ -63,7 +67,7 @@ jobs:
       - name: Check Clippy lints on examples (no default features)
         run: cargo clippy --verbose --all --examples --no-default-features
       - name: Check Clippy lints on examples (all features except sync)
-        run: cargo clippy --verbose --all --examples --no-default-features --features=debug,delta,get-size2,postcard-schema,retain,serde,std
+        run: cargo clippy --verbose --all --examples --no-default-features --features=base64,debug,delta,get-size2,hex,postcard-schema,retain,serde,std
       - name: Check Clippy lints on examples (all features)
         run: cargo clippy --verbose --all --examples --all-features
 
@@ -72,6 +76,6 @@ jobs:
       - name: Check Clippy lints on doctests (no default features)
         run: cargo test --verbose --doc --no-default-features
       - name: Check Clippy lints on doctests (all features except sync)
-        run: cargo test --verbose --doc --no-default-features --features=debug,delta,get-size2,postcard-schema,retain,serde,std
+        run: cargo test --verbose --doc --no-default-features --features=base64,debug,delta,get-size2,hex,postcard-schema,retain,serde,std
       - name: Check Clippy lints on doctests (all features)
         run: cargo test --verbose --doc --all-features
